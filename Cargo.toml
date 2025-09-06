@@ -6,6 +6,10 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[example]]
+name = "desktop"
+path = "examples/desktop.rs"
+
 [profile.release]
 strip = true
 
