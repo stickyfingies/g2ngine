@@ -26,8 +26,14 @@ web-sys = { version = "0.3", features = [
 
 [dependencies]
 anyhow = "1.0"
+bytemuck = { version = "1.16", features = ["derive"] }
 winit = { version = "0.30", features = ["android-native-activity"] }
 env_logger = "0.10"
 log = "0.4"
 wgpu = "26.0.1"
 pollster = "0.3"
+
+[dependencies.image]
+version = "0.24"
+default-features = false
+features = ["png", "jpeg"]
