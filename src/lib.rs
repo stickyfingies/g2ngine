@@ -12,6 +12,8 @@ use winit::{
     window::Window,
 };
 
+use crate::texture::GpuTexture;
+
 mod texture; // mod before or, after, use?
 
 struct Instance {
@@ -268,6 +270,7 @@ pub struct State {
     camera_bind_group: wgpu::BindGroup,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+    depth_texture: GpuTexture,
     window: Arc<Window>,
 }
 
@@ -332,10 +335,11 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        let depth_texture = GpuTexture::create_depth_texture(&device, &config, "Depth Texture");
+
         let diffuse_bytes = include_bytes!("happy-tree.png");
         let diffuse_texture =
-            texture::GpuTexture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png")
-                .unwrap();
+            GpuTexture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -463,7 +467,13 @@ impl State {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: texture::GpuTexture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -532,6 +542,7 @@ impl State {
             camera_uniform,
             instances,
             instance_buffer,
+            depth_texture,
             window,
         })
     }
@@ -546,7 +557,8 @@ impl State {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
-
+            self.depth_texture =
+                GpuTexture::create_depth_texture(&self.device, &self.config, "Depth Texture");
             self.camera.aspect = self.config.width as f32 / self.config.height as f32;
         }
     }
@@ -604,7 +616,14 @@ impl State {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
