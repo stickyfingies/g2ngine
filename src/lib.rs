@@ -1,3 +1,4 @@
+use crate::texture::GpuTexture;
 use cgmath::prelude::*;
 use cgmath::{Matrix4, Point3, Quaternion, Vector3, Vector4};
 use std::{iter, sync::Arc};
@@ -12,8 +13,7 @@ use winit::{
     window::Window,
 };
 
-use crate::texture::GpuTexture;
-
+mod resources;
 mod texture; // mod before or, after, use?
 
 struct Instance {
@@ -337,9 +337,9 @@ impl State {
 
         let depth_texture = GpuTexture::create_depth_texture(&device, &config, "Depth Texture");
 
-        let diffuse_bytes = include_bytes!("happy-tree.png");
+        let diffuse_bytes = resources::load_binary("happy-tree.png").await.unwrap();
         let diffuse_texture =
-            GpuTexture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png").unwrap();
+            GpuTexture::from_bytes(&device, &queue, &diffuse_bytes[..], "happy-tree.png").unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -424,9 +424,11 @@ impl State {
             label: Some("camera_bind_group"),
         });
 
+        let shader_source = resources::load_string("shader.wgsl").await.unwrap();
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
         let render_pipeline_layout =
@@ -737,7 +739,7 @@ impl ApplicationHandler<State> for App {
                 state.update();
                 match state.render() {
                     Ok(_) => {}
-                    // Reconfigure the surface if it's lost or outdated
+                    // Reconfigure the surface if it's lost, outdated, or suboptimal
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         let size = state.window.inner_size();
                         state.resize(size.width, size.height);
