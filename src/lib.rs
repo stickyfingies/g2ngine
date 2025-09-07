@@ -1,7 +1,7 @@
-mod texture;
-
-use std::sync::Arc;
-
+use std::{iter, sync::Arc};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
     event::*,
@@ -10,28 +10,33 @@ use winit::{
     window::Window,
 };
 
-use wgpu::util::DeviceExt;
-
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
+mod texture;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
     position: [f32; 3],
-    color: [f32; 3],
     tex_coords: [f32; 2],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
-
     fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+            ],
         }
     }
 }
@@ -39,32 +44,27 @@ impl Vertex {
 const VERTICES: &[Vertex] = &[
     Vertex {
         position: [-0.0868241, 0.49240386, 0.0],
-        color: [1.0, 1.0, 1.0],
-        tex_coords: [0.4131759, 1.0 - 0.99240386],
+        tex_coords: [0.4131759, 0.00759614],
     }, // A
     Vertex {
         position: [-0.49513406, 0.06958647, 0.0],
-        color: [1.0, 1.0, 1.0],
-        tex_coords: [0.0048659444, 1.0 - 0.56958647],
+        tex_coords: [0.0048659444, 0.43041354],
     }, // B
     Vertex {
         position: [-0.21918549, -0.44939706, 0.0],
-        color: [1.0, 1.0, 1.0],
-        tex_coords: [0.28081453, 1.0 - 0.05060294],
+        tex_coords: [0.28081453, 0.949397],
     }, // C
     Vertex {
         position: [0.35966998, -0.3473291, 0.0],
-        color: [1.0, 1.0, 1.0],
-        tex_coords: [0.85967, 1.0 - 0.1526709],
+        tex_coords: [0.85967, 0.84732914],
     }, // D
     Vertex {
         position: [0.44147372, 0.2347359, 0.0],
-        color: [1.0, 1.0, 1.0],
-        tex_coords: [0.9414737, 1.0 - 0.7347359],
+        tex_coords: [0.9414737, 0.2652641],
     }, // E
 ];
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, /* padding */ 0];
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
@@ -88,7 +88,26 @@ impl Camera {
     fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
         let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
         let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
-        OPENGL_TO_WGPU_MATRIX * proj * view
+        proj * view
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct CameraUniform {
+    view_proj: [[f32; 4]; 4],
+}
+
+impl CameraUniform {
+    fn new() -> Self {
+        use cgmath::SquareMatrix;
+        Self {
+            view_proj: cgmath::Matrix4::identity().into(),
+        }
+    }
+
+    fn update_view_proj(&mut self, camera: &Camera) {
+        self.view_proj = (OPENGL_TO_WGPU_MATRIX * camera.build_view_projection_matrix()).into();
     }
 }
 
@@ -111,37 +130,23 @@ impl CameraController {
         }
     }
 
-    fn process_events(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state,
-                        physical_key: PhysicalKey::Code(keycode),
-                        ..
-                    },
-                ..
-            } => {
-                let is_pressed = *state == ElementState::Pressed;
-                match keycode {
-                    KeyCode::KeyW | KeyCode::ArrowUp => {
-                        self.is_forward_pressed = is_pressed;
-                        true
-                    }
-                    KeyCode::KeyA | KeyCode::ArrowLeft => {
-                        self.is_left_pressed = is_pressed;
-                        true
-                    }
-                    KeyCode::KeyS | KeyCode::ArrowDown => {
-                        self.is_backward_pressed = is_pressed;
-                        true
-                    }
-                    KeyCode::KeyD | KeyCode::ArrowRight => {
-                        self.is_right_pressed = is_pressed;
-                        true
-                    }
-                    _ => false,
-                }
+    fn handle_key(&mut self, key: KeyCode, is_pressed: bool) -> bool {
+        match key {
+            KeyCode::KeyW | KeyCode::ArrowUp => {
+                self.is_forward_pressed = is_pressed;
+                true
+            }
+            KeyCode::KeyA | KeyCode::ArrowLeft => {
+                self.is_left_pressed = is_pressed;
+                true
+            }
+            KeyCode::KeyS | KeyCode::ArrowDown => {
+                self.is_backward_pressed = is_pressed;
+                true
+            }
+            KeyCode::KeyD | KeyCode::ArrowRight => {
+                self.is_right_pressed = is_pressed;
+                true
             }
             _ => false,
         }
@@ -153,6 +158,8 @@ impl CameraController {
         let forward_norm = forward.normalize();
         let forward_mag = forward.magnitude();
 
+        // Prevents glitching when camera gets too close to the
+        // center of the scene.
         if self.is_forward_pressed && forward_mag > self.speed {
             camera.eye += forward_norm * self.speed;
         }
@@ -162,11 +169,14 @@ impl CameraController {
 
         let right = forward_norm.cross(camera.up);
 
-        // Redo radius calc in case the forward/backward is pressed
+        // Redo radius calc in case the up/ down is pressed.
         let forward = camera.target - camera.eye;
         let forward_mag = forward.magnitude();
 
         if self.is_right_pressed {
+            // Rescale the distance between the target and eye so
+            // that it doesn't change. The eye therefore still
+            // lies on the circle made by the target and eye.
             camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
         }
         if self.is_left_pressed {
@@ -175,48 +185,29 @@ impl CameraController {
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    view_proj: [[f32; 4]; 4],
-}
-
-impl CameraUniform {
-    fn new() -> Self {
-        use cgmath::SquareMatrix;
-        Self {
-            view_proj: cgmath::Matrix4::identity().into(),
-        }
-    }
-
-    fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = camera.build_view_projection_matrix().into();
-    }
-}
-
 pub struct State {
-    window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
-    clear_color: wgpu::Color,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
-    diffuse_bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
     diffuse_texture: texture::GpuTexture,
+    diffuse_bind_group: wgpu::BindGroup,
     camera: Camera,
+    camera_controller: CameraController,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    camera_controller: CameraController,
+    window: Arc<Window>,
 }
 
 impl State {
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
+    async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -235,7 +226,8 @@ impl State {
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
-            .await?;
+            .await
+            .unwrap();
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -247,17 +239,21 @@ impl State {
                     wgpu::Limits::default()
                 },
                 memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
+                trace: wgpu::Trace::Off, // Trace path
             })
-            .await?;
+            .await
+            .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
 
+        // Shader code in this tutorial assumes an Srgb surface texture. Using a different
+        // one will result all the colors comming out darker. If you want to support non
+        // Srgb surfaces, you'll need to account for that when drawing to the frame.
         let surface_format = surface_caps
             .formats
             .iter()
-            .find(|f| f.is_srgb())
             .copied()
+            .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
@@ -274,11 +270,10 @@ impl State {
         let diffuse_bytes = include_bytes!("happy-tree.png");
         let diffuse_texture =
             texture::GpuTexture::from_bytes(&device, &queue, diffuse_bytes, "happy-tree.png")
-                .expect("Failed to create texture");
+                .unwrap();
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture_bind_group_layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -297,10 +292,10 @@ impl State {
                         count: None,
                     },
                 ],
+                label: Some("texture_bind_group_layout"),
             });
 
         let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("diffuse_bind_group"),
             layout: &texture_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -312,6 +307,7 @@ impl State {
                     resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
                 },
             ],
+            label: Some("diffuse_bind_group"),
         });
 
         let camera = Camera {
@@ -324,6 +320,8 @@ impl State {
             zfar: 100.0,
         };
 
+        let camera_controller = CameraController::new(0.2);
+
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera);
 
@@ -335,7 +333,6 @@ impl State {
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("camera_bind_group_layout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
@@ -346,15 +343,16 @@ impl State {
                     },
                     count: None,
                 }],
+                label: Some("camera_bind_group_layout"),
             });
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera_bind_group"),
             layout: &camera_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_buffer.as_entire_binding(),
             }],
+            label: Some("camera_bind_group"),
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -376,17 +374,20 @@ impl State {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -421,46 +422,48 @@ impl State {
 
         let num_indices = INDICES.len() as u32;
 
-        let camera_controller = CameraController::new(0.2);
-
         Ok(Self {
-            window,
             surface,
             device,
             queue,
             config,
             is_surface_configured: false,
-            clear_color: wgpu::Color {
-                r: 0.1,
-                g: 0.2,
-                b: 0.3,
-                a: 1.0,
-            },
             render_pipeline,
             vertex_buffer,
             index_buffer,
             num_indices,
-            diffuse_bind_group,
             diffuse_texture,
+            diffuse_bind_group,
             camera,
-            camera_uniform,
+            camera_controller,
             camera_buffer,
             camera_bind_group,
-            camera_controller,
+            camera_uniform,
+            window,
         })
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
+            self.is_surface_configured = true;
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
-            self.is_surface_configured = true;
+
+            self.camera.aspect = self.config.width as f32 / self.config.height as f32;
         }
     }
 
-    pub fn set_clear_color(&mut self, color: wgpu::Color) {
-        self.clear_color = color;
+    fn handle_key(&mut self, event_loop: &ActiveEventLoop, key: KeyCode, pressed: bool) {
+        if key == KeyCode::Escape && pressed {
+            event_loop.exit();
+        } else {
+            self.camera_controller.handle_key(key, pressed);
+        }
     }
 
     fn update(&mut self) {
@@ -481,7 +484,6 @@ impl State {
         }
 
         let output = self.surface.get_current_texture()?;
-
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -498,11 +500,16 @@ impl State {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
-                    depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
@@ -517,7 +524,7 @@ impl State {
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
         Ok(())
@@ -556,20 +563,18 @@ impl ApplicationHandler<State> for App {
 
             let window = wgpu::web_sys::window().unwrap_throw();
             let document = window.document().unwrap_throw();
-            let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw(); // TODO better handling
+            let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw();
             let html_canvas_element = canvas.unchecked_into();
             window_attributes = window_attributes.with_canvas(Some(html_canvas_element));
         }
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
-        // Create the State(window) on desktop
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
         }
 
-        // Create the State(window) on web
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(proxy) = self.proxy.take() {
@@ -579,11 +584,11 @@ impl ApplicationHandler<State> for App {
                             .send_event(
                                 State::new(window)
                                     .await
-                                    .expect("Unable to create window using canvas.")
+                                    .expect("Unable to create canvas!!!")
                             )
                             .is_ok()
                     )
-                })
+                });
             }
         }
     }
@@ -592,7 +597,6 @@ impl ApplicationHandler<State> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut event: State) {
         #[cfg(target_arch = "wasm32")]
         {
-            // This is where proxy.send_event() ends up
             event.window.request_redraw();
             event.resize(
                 event.window.inner_size().width,
@@ -616,29 +620,25 @@ impl ApplicationHandler<State> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::CursorMoved { position, .. } => {
-                let r = position.x / state.config.width as f64;
-                let g = position.y / state.config.height as f64;
-                state.set_clear_color(wgpu::Color {
-                    r,
-                    g,
-                    b: 0.3,
-                    a: 1.0,
-                });
-            }
             WindowEvent::RedrawRequested => {
                 state.update();
                 match state.render() {
                     Ok(_) => {}
+                    // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         let size = state.window.inner_size();
                         state.resize(size.width, size.height);
                     }
                     Err(e) => {
-                        log::error!("Unable to render: {}", e);
+                        log::error!("Unable to render {}", e);
                     }
                 }
             }
+            WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
+                (MouseButton::Left, true) => {}
+                (MouseButton::Left, false) => {}
+                _ => {}
+            },
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -647,26 +647,18 @@ impl ApplicationHandler<State> for App {
                         ..
                     },
                 ..
-            } => match (code, key_state.is_pressed()) {
-                (KeyCode::Escape, true) => event_loop.exit(),
-                _ => {
-                    state.camera_controller.process_events(&event);
-                }
-            },
+            } => state.handle_key(event_loop, code, key_state.is_pressed()),
             _ => {}
         }
     }
 }
 
 pub fn run() -> anyhow::Result<()> {
+    // Set up logging
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        env_logger::init();
-    }
+    env_logger::init();
     #[cfg(target_arch = "wasm32")]
-    {
-        console_log::init_with_level(log::Level::Info).unwrap_throw();
-    }
+    console_log::init_with_level(log::Level::Info).unwrap_throw();
 
     let event_loop = EventLoop::with_user_event().build()?;
     let mut app = App::new(
