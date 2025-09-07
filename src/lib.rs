@@ -1,3 +1,4 @@
+use crate::state::State;
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -8,8 +9,6 @@ use winit::{
     keyboard::PhysicalKey,
     window::Window,
 };
-
-use crate::state::State;
 
 mod resources;
 mod state;
