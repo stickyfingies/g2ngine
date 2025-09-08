@@ -9,7 +9,8 @@ fn setup_global_functions() -> Result<(), JsValue> {
         log_from_js(message);
     }) as Box<dyn Fn(String)>);
 
-    js_sys::Reflect::set(&window, &"say".into(), say_closure.as_ref().unchecked_ref());
+    js_sys::Reflect::set(&window, &"say".into(), say_closure.as_ref().unchecked_ref())
+        .expect("Failed to set global function");
     say_closure.forget();
 
     Ok(())

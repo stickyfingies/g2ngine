@@ -1,5 +1,4 @@
 use boa_engine::{Context, JsValue, NativeFunction, Source};
-use std::cell::RefCell;
 
 use crate::resources::load_string;
 use crate::scripting::{ScriptEngine, log_from_js};

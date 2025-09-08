@@ -611,6 +611,16 @@ impl State {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+
+        // Call JS update function every frame and capture clear color
+        match self.call_update_function() {
+            Ok(color) => {
+                self.set_clear_color(color);
+            }
+            Err(e) => {
+                log::warn!("{}", e);
+            }
+        }
     }
 
     pub fn set_clear_color(&mut self, color: [f32; 4]) {
@@ -689,6 +699,10 @@ impl State {
         }
 
         let output = self.surface.get_current_texture()?;
+        if output.suboptimal {
+            return Err(wgpu::SurfaceError::Outdated);
+        }
+
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());

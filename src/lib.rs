@@ -70,11 +70,11 @@ impl ApplicationHandler<State> for App {
         }
 
         // [Browser]
-        // Initializing the rendering state is an asynchronous operation,
+        // Initializing the application state is an asynchronous operation,
         // which we cannot block/await in wasm due to runtime limitations.
         // Instead, we launch a background process where we can await it.
         // When it finishes, a message is sent to the event loop containing
-        // the newly-created renderstate.
+        // the newly-created application state.
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(proxy) = self.proxy.take() {
@@ -118,18 +118,6 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                {
-                    // Call JS update function every frame and capture clear color
-                    match state.call_update_function() {
-                        Ok(color) => {
-                            state.set_clear_color(color);
-                        }
-                        Err(e) => {
-                            log::warn!("{}", e);
-                        }
-                    }
-                }
-
                 state.update();
                 match state.render() {
                     Ok(_) => {}
