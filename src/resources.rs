@@ -2,7 +2,7 @@
 fn format_url(file_name: &str) -> reqwest::Url {
     let window = web_sys::window().unwrap();
     let location = window.location();
-    let mut origin = location.origin().unwrap();
+    let origin = location.origin().unwrap();
     let base = reqwest::Url::parse(&format!("{}/res/", origin)).unwrap();
     base.join(file_name).unwrap()
 }

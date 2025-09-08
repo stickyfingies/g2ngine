@@ -289,6 +289,9 @@ impl State {
             .await
             .unwrap();
 
+        let backend = adapter.get_info().backend;
+        log::info!("Render backend: {}", backend);
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,

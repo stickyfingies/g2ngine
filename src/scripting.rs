@@ -3,7 +3,12 @@ pub trait ScriptEngine {
     where
         Self: Sized;
 
-    fn load_javascript_file(&self, path: String);
+    async fn load_javascript_file(&self, path: String);
+    fn call_javascript_function(
+        &self,
+        function_name: String,
+        args: Vec<String>,
+    ) -> Result<String, String>;
 }
 
 pub fn log_from_js(message: String) {

@@ -1,3 +1,12 @@
+#[cfg(not(target_arch = "wasm32"))]
+mod engine_desktop;
+#[cfg(target_arch = "wasm32")]
+mod engine_web;
+mod resources;
+mod scripting;
+mod state;
+mod texture;
+
 use crate::{scripting::ScriptEngine, state::State};
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
@@ -10,30 +19,54 @@ use winit::{
     window::Window,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-mod engine_desktop;
+// Decide a script engine type
 #[cfg(target_arch = "wasm32")]
-mod engine_web;
-mod resources;
-mod scripting;
-mod state;
-mod texture; // mod before or, after, use?
+type PlatformScriptEngine = engine_web::ScriptEngineWeb;
+#[cfg(not(target_arch = "wasm32"))]
+type PlatformScriptEngine = engine_desktop::ScriptEngineDesktop;
 
 pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>,
     state: Option<State>,
+    script_engine: PlatformScriptEngine,
 }
 
 impl App {
     pub fn new(#[cfg(target_arch = "wasm32")] event_loop: &EventLoop<State>) -> Self {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
+
+        // Platform-specific script engine types
+        #[cfg(target_arch = "wasm32")]
+        let script_engine = engine_web::ScriptEngineWeb::new();
+        #[cfg(not(target_arch = "wasm32"))]
+        let script_engine = engine_desktop::ScriptEngineDesktop::new();
+
         Self {
             state: None,
             #[cfg(target_arch = "wasm32")]
             proxy,
+            script_engine,
         }
+    }
+}
+
+fn call_demo_functions<T: ScriptEngine>(script_engine: &T) {
+    // Demonstrate calling JavaScript functions from Rust
+    match script_engine.call_javascript_function("getInfo".into(), vec![]) {
+        Ok(result) => log::info!("JS getInfo() returned: {}", result),
+        Err(e) => log::error!("Failed to call getInfo: {}", e),
+    }
+
+    match script_engine.call_javascript_function("greet".into(), vec!["Rust".into()]) {
+        Ok(result) => log::info!("JS greet('Rust') returned: {}", result),
+        Err(e) => log::error!("Failed to call greet: {}", e),
+    }
+
+    match script_engine.call_javascript_function("add".into(), vec!["5".into(), "3".into()]) {
+        Ok(result) => log::info!("JS add('5', '3') returned: {}", result),
+        Err(e) => log::error!("Failed to call add: {}", e),
     }
 }
 
@@ -58,13 +91,24 @@ impl ApplicationHandler<State> for App {
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
+        // Desktop:
+        // Load script, create renderstate, call JS functions
         #[cfg(not(target_arch = "wasm32"))]
         {
+            pollster::block_on(self.script_engine.load_javascript_file("demo.js".into()));
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
+            call_demo_functions(&self.script_engine);
         }
 
+        // Browser:
+        // Load script | create renderstate, see `user_event` below
         #[cfg(target_arch = "wasm32")]
         {
+            wasm_bindgen_futures::spawn_local(async {
+                let script_engine = engine_web::ScriptEngineWeb::new();
+                script_engine.load_javascript_file("demo.js".into()).await;
+            });
+
             if let Some(proxy) = self.proxy.take() {
                 wasm_bindgen_futures::spawn_local(async move {
                     assert!(
@@ -75,7 +119,7 @@ impl ApplicationHandler<State> for App {
                                     .expect("Unable to create canvas!!!")
                             )
                             .is_ok()
-                    )
+                    );
                 });
             }
         }
@@ -92,6 +136,10 @@ impl ApplicationHandler<State> for App {
             );
         }
         self.state = Some(event);
+
+        // call JS functions once renderstate is ready
+        #[cfg(target_arch = "wasm32")]
+        call_demo_functions(&self.script_engine);
     }
 
     fn window_event(
@@ -141,27 +189,12 @@ impl ApplicationHandler<State> for App {
     }
 }
 
-fn create_script_engine() -> Box<dyn ScriptEngine> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        Box::new(engine_web::ScriptEngineWeb::new())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Box::new(engine_desktop::ScriptEngineDesktop::new())
-    }
-}
-
 pub fn run() -> anyhow::Result<()> {
     // Set up logging
     #[cfg(not(target_arch = "wasm32"))]
     env_logger::init();
     #[cfg(target_arch = "wasm32")]
     console_log::init_with_level(log::Level::Info).unwrap_throw();
-
-    // Set up script engine
-    let script_engine = create_script_engine();
-    script_engine.load_javascript_file("demo.js".into());
 
     let event_loop = EventLoop::with_user_event().build()?;
     let mut app = App::new(
