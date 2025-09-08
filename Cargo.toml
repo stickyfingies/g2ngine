@@ -41,6 +41,7 @@ features = ["png", "jpeg"]
 # Web specific
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version="0.11" }
+futures = "0.3.31"
 console_error_panic_hook = "0.1.6"
 console_log = "1.0"
 wgpu = { version = "26.0.1", features = ["webgl"] }

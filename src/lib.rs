@@ -9,7 +9,7 @@ mod texture;
 
 use crate::{scripting::ScriptEngine, state::State};
 use serde::Serialize;
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Serialize)]
 struct GameData {
@@ -38,7 +38,7 @@ pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>,
     state: Option<State>,
-    script_engine: PlatformScriptEngine,
+    script_engine: Rc<RefCell<PlatformScriptEngine>>,
 }
 
 impl App {
@@ -56,7 +56,10 @@ impl App {
             state: None,
             #[cfg(target_arch = "wasm32")]
             proxy,
-            script_engine,
+            // This needs to be reference-counted because web initialization
+            // requires access to the script engine from a background process
+            // which may not borrow from App, so we clone the reference instead.
+            script_engine: Rc::new(RefCell::new(script_engine)),
         }
     }
 }
@@ -113,33 +116,46 @@ impl ApplicationHandler<State> for App {
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
-        // Desktop:
-        // Load script, create renderstate, call JS functions
+        // [Desktop]
+        // This is pretty basic - just await (block_on) async initialization.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            pollster::block_on(self.script_engine.load_javascript_file("demo.js".into()));
+            pollster::block_on(
+                self.script_engine
+                    .borrow_mut()
+                    .load_javascript_file("demo.js".into()),
+            );
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
-            call_demo_functions(&self.script_engine);
+            call_demo_functions(&*self.script_engine.borrow());
         }
 
-        // Browser:
-        // Load script | create renderstate, see `user_event` below
+        // [Browser]
+        //     *inhale* Initializing the scripting engine and rendering state
+        // are both asynchronous operations, which we cannot block/await in
+        // wasm due to runtime limitations.  Instead, we clone the reference
+        // to the scripting engine[0], and launch a background process[1] where
+        // we can await them.  When they finish, a message is sent[2] to the
+        // event loop containing the newly-created renderstate.
         #[cfg(target_arch = "wasm32")]
         {
-            wasm_bindgen_futures::spawn_local(async {
-                let script_engine = engine_web::ScriptEngineWeb::new();
-                script_engine.load_javascript_file("demo.js".into()).await;
-            });
+            use futures::future::join;
 
             if let Some(proxy) = self.proxy.take() {
+                // 0 - see note
+                let script_engine = self.script_engine.clone();
+                // 1 - see note
                 wasm_bindgen_futures::spawn_local(async move {
+                    let (state, _) = join(
+                        State::new(window),
+                        script_engine
+                            .borrow_mut()
+                            .load_javascript_file("demo.js".into()),
+                    )
+                    .await;
+                    // 2 - see note
                     assert!(
                         proxy
-                            .send_event(
-                                State::new(window)
-                                    .await
-                                    .expect("Unable to create canvas!!!")
-                            )
+                            .send_event(state.expect("Unable to create canvas!!!"))
                             .is_ok()
                     );
                 });
@@ -161,7 +177,7 @@ impl ApplicationHandler<State> for App {
 
         // call JS functions once renderstate is ready
         #[cfg(target_arch = "wasm32")]
-        call_demo_functions(&self.script_engine);
+        call_demo_functions(&*self.script_engine.borrow());
     }
 
     fn window_event(
@@ -183,6 +199,7 @@ impl ApplicationHandler<State> for App {
                     // Call JS update function every frame and capture clear color
                     match self
                         .script_engine
+                        .borrow()
                         .call_javascript_function("update".into(), &())
                     {
                         Ok(result) => {
