@@ -8,7 +8,16 @@ mod state;
 mod texture;
 
 use crate::{scripting::ScriptEngine, state::State};
+use serde::Serialize;
 use std::sync::Arc;
+
+#[derive(Serialize)]
+struct GameData {
+    player_name: String,
+    score: u32,
+    level: u8,
+    position: [f32; 2],
+}
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use winit::{
@@ -53,20 +62,33 @@ impl App {
 }
 
 fn call_demo_functions<T: ScriptEngine>(script_engine: &T) {
-    // Demonstrate calling JavaScript functions from Rust
-    match script_engine.call_javascript_function("getInfo".into(), vec![]) {
+    // Demonstrate calling JavaScript functions from Rust with simple data
+    match script_engine.call_javascript_function("getInfo".into(), &()) {
         Ok(result) => log::info!("JS getInfo() returned: {}", result),
         Err(e) => log::error!("Failed to call getInfo: {}", e),
     }
 
-    match script_engine.call_javascript_function("greet".into(), vec!["Rust".into()]) {
+    match script_engine.call_javascript_function("greet".into(), &"Rust".to_string()) {
         Ok(result) => log::info!("JS greet('Rust') returned: {}", result),
         Err(e) => log::error!("Failed to call greet: {}", e),
     }
 
-    match script_engine.call_javascript_function("add".into(), vec!["5".into(), "3".into()]) {
-        Ok(result) => log::info!("JS add('5', '3') returned: {}", result),
+    match script_engine.call_javascript_function("add".into(), &[5, 3]) {
+        Ok(result) => log::info!("JS add([5, 3]) returned: {}", result),
         Err(e) => log::error!("Failed to call add: {}", e),
+    }
+
+    // NEW: Demonstrate passing a Rust struct to JavaScript
+    let game_data = GameData {
+        player_name: "Alice".to_string(),
+        score: 1250,
+        level: 5,
+        position: [100.5, 200.0],
+    };
+
+    match script_engine.call_javascript_function("processGameData".into(), &game_data) {
+        Ok(result) => log::info!("JS processGameData(struct) returned: {}", result),
+        Err(e) => log::error!("Failed to call processGameData: {}", e),
     }
 }
 
@@ -161,7 +183,7 @@ impl ApplicationHandler<State> for App {
                     // Call JS update function every frame and capture clear color
                     match self
                         .script_engine
-                        .call_javascript_function("update".into(), vec![])
+                        .call_javascript_function("update".into(), &())
                     {
                         Ok(result) => {
                             // Try to parse the result as a JSON array [r, g, b, a]

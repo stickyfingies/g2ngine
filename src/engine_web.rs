@@ -75,7 +75,11 @@ impl ScriptEngine for ScriptEngineWeb {
         JsFuture::from(promise).await.unwrap();
     }
 
-    fn call_javascript_function(&self, function_name: String, args: Vec<String>) -> Result<String, String> {
+    fn call_javascript_function<T: serde::Serialize>(
+        &self,
+        function_name: String,
+        data: &T,
+    ) -> Result<String, String> {
         let window = web_sys::window().ok_or("No window object available")?;
         
         let function = js_sys::Reflect::get(&window, &function_name.as_str().into())
@@ -85,12 +89,14 @@ impl ScriptEngine for ScriptEngineWeb {
             return Err(format!("'{}' is not a function", function_name));
         }
 
-        let js_args: js_sys::Array = args.iter()
-            .map(|arg| JsValue::from_str(arg))
-            .collect();
+        let json_data = serde_json::to_string(data)
+            .map_err(|e| format!("Failed to serialize data: {}", e))?;
+
+        let js_data = js_sys::JSON::parse(&json_data)
+            .map_err(|e| format!("Failed to parse JSON data: {:?}", e))?;
 
         let result = js_sys::Function::from(function)
-            .apply(&window, &js_args)
+            .call1(&window, &js_data)
             .map_err(|e| format!("Function call failed: {:?}", e))?;
 
         // Try to get string first, then try JSON stringify, finally debug format

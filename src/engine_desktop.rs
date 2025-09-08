@@ -41,23 +41,20 @@ impl ScriptEngine for ScriptEngineDesktop {
         *self.context.borrow_mut() = Some(context);
     }
 
-    fn call_javascript_function(
+    fn call_javascript_function<T: serde::Serialize>(
         &self,
         function_name: String,
-        args: Vec<String>,
+        data: &T,
     ) -> Result<String, String> {
         let mut context_opt = self.context.borrow_mut();
         let context = context_opt
             .as_mut()
             .ok_or("No JavaScript context available. Load a script first.")?;
 
-        let args_str = args
-            .iter()
-            .map(|arg| format!("\"{}\"", arg.replace("\"", "\\\"")))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let json_data = serde_json::to_string(data)
+            .map_err(|e| format!("Failed to serialize data: {}", e))?;
 
-        let function_call = format!("{}({})", function_name, args_str);
+        let function_call = format!("{}({})", function_name, json_data);
 
         let source = Source::from_bytes(&function_call);
         let result = context

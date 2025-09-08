@@ -7,12 +7,16 @@ function greet(name) {
   return "Hello, " + name + "!";
 }
 
-function add(a, b) {
+function add([a, b]) {
   return parseInt(a) + parseInt(b);
 }
 
 function getInfo() {
   return "This is demo.js running";
+}
+
+function processGameData(input) {
+  say(JSON.stringify(input));
 }
 
 let color = [Math.random(), Math.random(), Math.random(), 1.0];

@@ -1,13 +1,16 @@
+use serde::Serialize;
+
 pub trait ScriptEngine {
     fn new() -> Self
     where
         Self: Sized;
 
     async fn load_javascript_file(&self, path: String);
-    fn call_javascript_function(
+
+    fn call_javascript_function<T: Serialize>(
         &self,
         function_name: String,
-        args: Vec<String>,
+        data: &T,
     ) -> Result<String, String>;
 }
 
