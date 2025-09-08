@@ -157,6 +157,33 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                {
+                    // Call JS update function every frame and capture clear color
+                    match self
+                        .script_engine
+                        .call_javascript_function("update".into(), vec![])
+                    {
+                        Ok(result) => {
+                            // Try to parse the result as a JSON array [r, g, b, a]
+                            match serde_json::from_str::<[f32; 4]>(&result) {
+                                Ok(color) => {
+                                    state.set_clear_color(color);
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "JS update() returned invalid color format: {} (error: {})",
+                                        result,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("JS update() failed: {}", e);
+                        }
+                    }
+                }
+
                 state.update();
                 match state.render() {
                     Ok(_) => {}

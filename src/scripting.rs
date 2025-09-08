@@ -11,6 +11,9 @@ pub trait ScriptEngine {
     ) -> Result<String, String>;
 }
 
+// Exposed to JS
+// TODO: bindings are hardcoded in engine_*.rs
+// TODO: binding interface in ScriptEngine
 pub fn log_from_js(message: String) {
     log::info!("[Rust Log]: {}", message);
 }

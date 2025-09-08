@@ -264,6 +264,7 @@ pub struct State {
     instance_buffer: wgpu::Buffer,
     depth_texture: GpuTexture,
     window: Arc<Window>,
+    clear_color: wgpu::Color,
 }
 
 impl State {
@@ -541,6 +542,12 @@ impl State {
             instance_buffer,
             depth_texture,
             window,
+            clear_color: wgpu::Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
+            },
         })
     }
 
@@ -578,6 +585,15 @@ impl State {
         );
     }
 
+    pub fn set_clear_color(&mut self, color: [f32; 4]) {
+        self.clear_color = wgpu::Color {
+            r: color[0].clamp(0.0, 1.0) as f64,
+            g: color[1].clamp(0.0, 1.0) as f64,
+            b: color[2].clamp(0.0, 1.0) as f64,
+            a: color[3].clamp(0.0, 1.0) as f64,
+        };
+    }
+
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
 
@@ -603,12 +619,7 @@ impl State {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,

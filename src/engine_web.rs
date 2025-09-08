@@ -93,6 +93,21 @@ impl ScriptEngine for ScriptEngineWeb {
             .apply(&window, &js_args)
             .map_err(|e| format!("Function call failed: {:?}", e))?;
 
-        Ok(result.as_string().unwrap_or_else(|| format!("{:?}", result)))
+        // Try to get string first, then try JSON stringify, finally debug format
+        if let Some(string_result) = result.as_string() {
+            Ok(string_result)
+        } else {
+            // Try to JSON stringify the result for arrays/objects
+            match js_sys::JSON::stringify(&result) {
+                Ok(json_string) => {
+                    if let Some(json_str) = json_string.as_string() {
+                        Ok(json_str)
+                    } else {
+                        Ok(format!("{:?}", result))
+                    }
+                }
+                Err(_) => Ok(format!("{:?}", result))
+            }
+        }
     }
 }
