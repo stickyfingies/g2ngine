@@ -64,7 +64,7 @@ impl App {
     }
 }
 
-fn call_demo_functions<T: ScriptEngine>(script_engine: &T) {
+fn call_demo_functions<T: ScriptEngine>(script_engine: &mut T) {
     // Demonstrate calling JavaScript functions from Rust with simple data
     match script_engine.call_javascript_function("getInfo".into(), &()) {
         Ok(result) => log::info!("JS getInfo() returned: {}", result),
@@ -126,7 +126,7 @@ impl ApplicationHandler<State> for App {
                     .load_javascript_file("demo.js".into()),
             );
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
-            call_demo_functions(&*self.script_engine.borrow());
+            call_demo_functions(&mut *self.script_engine.borrow_mut());
         }
 
         // [Browser]
@@ -177,7 +177,7 @@ impl ApplicationHandler<State> for App {
 
         // call JS functions once renderstate is ready
         #[cfg(target_arch = "wasm32")]
-        call_demo_functions(&*self.script_engine.borrow());
+        call_demo_functions(&mut *self.script_engine.borrow_mut());
     }
 
     fn window_event(
@@ -199,7 +199,7 @@ impl ApplicationHandler<State> for App {
                     // Call JS update function every frame and capture clear color
                     match self
                         .script_engine
-                        .borrow()
+                        .borrow_mut()
                         .call_javascript_function("update".into(), &())
                     {
                         Ok(result) => {

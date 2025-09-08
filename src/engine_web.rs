@@ -22,12 +22,12 @@ impl ScriptEngine for ScriptEngineWeb {
         ScriptEngineWeb {}
     }
 
-    async fn load_javascript_file(&self, path: String) {
-        use wasm_bindgen_futures::JsFuture;
+    async fn load_javascript_file(&mut self, path: String) {
         use js_sys::Promise;
-        use std::rc::Rc;
         use std::cell::RefCell;
-        
+        use std::rc::Rc;
+        use wasm_bindgen_futures::JsFuture;
+
         setup_global_functions().unwrap();
 
         let window = web_sys::window().unwrap();
@@ -46,7 +46,7 @@ impl ScriptEngine for ScriptEngineWeb {
         let promise = Promise::new(&mut |resolve, reject| {
             let resolve = Rc::new(RefCell::new(Some(resolve)));
             let reject = Rc::new(RefCell::new(Some(reject)));
-            
+
             let resolve_clone = resolve.clone();
             let onload_closure = Closure::wrap(Box::new(move || {
                 if let Some(resolve) = resolve_clone.borrow_mut().take() {
@@ -57,7 +57,12 @@ impl ScriptEngine for ScriptEngineWeb {
             let reject_clone = reject.clone();
             let onerror_closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
                 if let Some(reject) = reject_clone.borrow_mut().take() {
-                    reject.call1(&JsValue::undefined(), &JsValue::from_str("Script failed to load")).unwrap();
+                    reject
+                        .call1(
+                            &JsValue::undefined(),
+                            &JsValue::from_str("Script failed to load"),
+                        )
+                        .unwrap();
                 }
             }) as Box<dyn Fn(web_sys::Event)>);
 
@@ -76,12 +81,12 @@ impl ScriptEngine for ScriptEngineWeb {
     }
 
     fn call_javascript_function<T: serde::Serialize>(
-        &self,
+        &mut self,
         function_name: String,
         data: &T,
     ) -> Result<String, String> {
         let window = web_sys::window().ok_or("No window object available")?;
-        
+
         let function = js_sys::Reflect::get(&window, &function_name.as_str().into())
             .map_err(|_| format!("Failed to get function '{}'", function_name))?;
 
@@ -89,8 +94,8 @@ impl ScriptEngine for ScriptEngineWeb {
             return Err(format!("'{}' is not a function", function_name));
         }
 
-        let json_data = serde_json::to_string(data)
-            .map_err(|e| format!("Failed to serialize data: {}", e))?;
+        let json_data =
+            serde_json::to_string(data).map_err(|e| format!("Failed to serialize data: {}", e))?;
 
         let js_data = js_sys::JSON::parse(&json_data)
             .map_err(|e| format!("Failed to parse JSON data: {:?}", e))?;
@@ -112,7 +117,7 @@ impl ScriptEngine for ScriptEngineWeb {
                         Ok(format!("{:?}", result))
                     }
                 }
-                Err(_) => Ok(format!("{:?}", result))
+                Err(_) => Ok(format!("{:?}", result)),
             }
         }
     }

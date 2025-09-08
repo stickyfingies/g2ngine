@@ -17,47 +17,42 @@ fn setup_global_functions(context: &mut Context) {
 }
 
 pub struct ScriptEngineDesktop {
-    context: RefCell<Option<Context>>,
+    context: Context,
 }
 
 impl ScriptEngine for ScriptEngineDesktop {
     fn new() -> Self {
-        ScriptEngineDesktop {
-            context: RefCell::new(None),
-        }
+        let context = Context::default();
+        ScriptEngineDesktop { context }
     }
 
-    async fn load_javascript_file(&self, path: String) {
+    async fn load_javascript_file(&mut self, path: String) {
         let js_code = load_string(&path).await.unwrap();
         let js_source = Source::from_bytes(js_code.as_str());
 
-        let mut context = Context::default();
-        setup_global_functions(&mut context);
+        setup_global_functions(&mut self.context);
 
-        let result = context.eval(js_source).expect("Failed to evaluate script");
+        let result = self
+            .context
+            .eval(js_source)
+            .expect("Failed to evaluate script");
 
         log::info!("{}", result.display());
-
-        *self.context.borrow_mut() = Some(context);
     }
 
     fn call_javascript_function<T: serde::Serialize>(
-        &self,
+        &mut self,
         function_name: String,
         data: &T,
     ) -> Result<String, String> {
-        let mut context_opt = self.context.borrow_mut();
-        let context = context_opt
-            .as_mut()
-            .ok_or("No JavaScript context available. Load a script first.")?;
-
-        let json_data = serde_json::to_string(data)
-            .map_err(|e| format!("Failed to serialize data: {}", e))?;
+        let json_data =
+            serde_json::to_string(data).map_err(|e| format!("Failed to serialize data: {}", e))?;
 
         let function_call = format!("{}({})", function_name, json_data);
 
         let source = Source::from_bytes(&function_call);
-        let result = context
+        let result = self
+            .context
             .eval(source)
             .map_err(|e| format!("Function call failed: {}", e))?;
 

@@ -5,10 +5,10 @@ pub trait ScriptEngine {
     where
         Self: Sized;
 
-    async fn load_javascript_file(&self, path: String);
+    async fn load_javascript_file(&mut self, path: String);
 
     fn call_javascript_function<T: Serialize>(
-        &self,
+        &mut self,
         function_name: String,
         data: &T,
     ) -> Result<String, String>;
