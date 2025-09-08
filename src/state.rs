@@ -613,8 +613,9 @@ impl State {
         );
 
         // Call JS update function every frame and capture clear color
-        match self.call_update_function() {
+        match self.script_engine.call_js("update".into(), &()) {
             Ok(color) => {
+                let color: [f32; 4] = color;
                 self.set_clear_color(color);
             }
             Err(e) => {
@@ -632,31 +633,18 @@ impl State {
         };
     }
 
-    pub fn call_demo_functions(&mut self) {
+    pub fn call_demo_functions(&mut self) -> Result<(), String> {
         // Demonstrate calling JavaScript functions from Rust with simple data
-        match self
-            .script_engine
-            .call_javascript_function("getInfo".into(), &())
-        {
-            Ok(result) => log::info!("JS getInfo() returned: {}", result),
-            Err(e) => log::error!("Failed to call getInfo: {}", e),
-        }
+        let result: String = self.script_engine.call_js("getInfo".into(), &())?;
+        log::info!("JS getInfo() returned: {}", result);
 
-        match self
+        let result: String = self
             .script_engine
-            .call_javascript_function("greet".into(), &"Rust".to_string())
-        {
-            Ok(result) => log::info!("JS greet('Rust') returned: {}", result),
-            Err(e) => log::error!("Failed to call greet: {}", e),
-        }
+            .call_js("greet".into(), &"Rust".to_string())?;
+        log::info!("JS greet('Rust') returned: {}", result);
 
-        match self
-            .script_engine
-            .call_javascript_function("add".into(), &[5, 3])
-        {
-            Ok(result) => log::info!("JS add([5, 3]) returned: {}", result),
-            Err(e) => log::error!("Failed to call add: {}", e),
-        }
+        let result: i32 = self.script_engine.call_js("add".into(), &[5, 3])?;
+        log::info!("JS add([5, 3]) returned: {}", result);
 
         // NEW: Demonstrate passing a Rust struct to JavaScript
         let game_data = GameData {
@@ -666,29 +654,11 @@ impl State {
             position: [100.5, 200.0],
         };
 
-        match self
+        let _result: () = self
             .script_engine
-            .call_javascript_function("processGameData".into(), &game_data)
-        {
-            Ok(result) => log::info!("JS processGameData(struct) returned: {}", result),
-            Err(e) => log::error!("Failed to call processGameData: {}", e),
-        }
-    }
+            .call_js("processGameData".into(), &game_data)?;
 
-    pub fn call_update_function(&mut self) -> Result<[f32; 4], String> {
-        match self
-            .script_engine
-            .call_javascript_function("update".into(), &())
-        {
-            Ok(result) => {
-                // Try to parse the result as a JSON array [r, g, b, a]
-                match serde_json::from_str::<[f32; 4]>(&result) {
-                    Ok(color) => Ok(color),
-                    Err(e) => Err(format!("Invalid color format: {} (error: {})", result, e)),
-                }
-            }
-            Err(e) => Err(format!("JS update() failed: {}", e)),
-        }
+        Ok(())
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {

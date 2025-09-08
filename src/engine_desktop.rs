@@ -39,11 +39,11 @@ impl ScriptEngine for ScriptEngineDesktop {
         log::info!("{}", result.display());
     }
 
-    fn call_javascript_function<T: serde::Serialize>(
+    fn call_js<T: serde::Serialize, R: for<'de> serde::Deserialize<'de>>(
         &mut self,
         function_name: String,
         data: &T,
-    ) -> Result<String, String> {
+    ) -> Result<R, String> {
         let json_data =
             serde_json::to_string(data).map_err(|e| format!("Failed to serialize data: {}", e))?;
 
@@ -55,6 +55,24 @@ impl ScriptEngine for ScriptEngineDesktop {
             .eval(source)
             .map_err(|e| format!("Function call failed: {}", e))?;
 
-        Ok(result.display().to_string())
+        let result_string = result.display().to_string();
+
+        // Handle JavaScript undefined/null which aren't valid JSON
+        let json_value: serde_json::Value = if result_string == "undefined"
+            || result_string == "null"
+        {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_str(&result_string)
+                .map_err(|e| format!("Failed to parse result as JSON '{}': {}", result_string, e))?
+        };
+
+        // Then convert from Value to target type (this handles number->i32, string->String, etc.)
+        serde_json::from_value(json_value).map_err(|e| {
+            format!(
+                "Failed to convert result '{}' to target type: {}",
+                result_string, e
+            )
+        })
     }
 }

@@ -65,7 +65,9 @@ impl ApplicationHandler<State> for App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut state = pollster::block_on(State::new(window)).unwrap();
-            state.call_demo_functions();
+            if let Err(e) = state.call_demo_functions() {
+                log::error!("Demo functions failed: {}", e);
+            }
             self.state = Some(state);
         }
 
@@ -98,7 +100,9 @@ impl ApplicationHandler<State> for App {
                 event.window().inner_size().height,
             );
             // call JS functions once renderstate is ready
-            event.call_demo_functions();
+            if let Err(e) = event.call_demo_functions() {
+                log::error!("Demo functions failed: {}", e);
+            }
         }
         self.state = Some(event);
     }

@@ -81,11 +81,11 @@ impl ScriptEngine for ScriptEngineWeb {
         JsFuture::from(promise).await.unwrap();
     }
 
-    fn call_javascript_function<T: serde::Serialize>(
+    fn call_js<T: serde::Serialize, R: for<'de> serde::Deserialize<'de>>(
         &mut self,
         function_name: String,
         data: &T,
-    ) -> Result<String, String> {
+    ) -> Result<R, String> {
         let window = web_sys::window().ok_or("No window object available")?;
 
         let function = js_sys::Reflect::get(&window, &function_name.as_str().into())
@@ -105,21 +105,30 @@ impl ScriptEngine for ScriptEngineWeb {
             .call1(&window, &js_data)
             .map_err(|e| format!("Function call failed: {:?}", e))?;
 
-        // Try to get string first, then try JSON stringify, finally debug format
-        if let Some(string_result) = result.as_string() {
-            Ok(string_result)
+        // Handle JavaScript undefined/null directly
+        let json_value: serde_json::Value = if result.is_undefined() || result.is_null() {
+            serde_json::Value::Null
+        } else if let Some(string_result) = result.as_string() {
+            // If it's already a string, convert to JSON Value
+            serde_json::Value::String(string_result)
         } else {
-            // Try to JSON stringify the result for arrays/objects
+            // Try to JSON stringify the result for arrays/objects/numbers
             match js_sys::JSON::stringify(&result) {
                 Ok(json_string) => {
                     if let Some(json_str) = json_string.as_string() {
-                        Ok(json_str)
+                        serde_json::from_str(&json_str).map_err(|e| {
+                            format!("Failed to parse stringified result '{}': {}", json_str, e)
+                        })?
                     } else {
-                        Ok(format!("{:?}", result))
+                        return Err("Failed to stringify result".to_string());
                     }
                 }
-                Err(_) => Ok(format!("{:?}", result)),
+                Err(_) => return Err("Failed to stringify result".to_string()),
             }
-        }
+        };
+
+        // Then convert from Value to target type (this handles number->i32, string->String, etc.)
+        serde_json::from_value(json_value)
+            .map_err(|e| format!("Failed to convert result to target type: {}", e))
     }
 }

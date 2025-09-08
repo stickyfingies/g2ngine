@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub trait ScriptEngine {
     fn new() -> Self
@@ -7,11 +7,11 @@ pub trait ScriptEngine {
 
     async fn load_javascript_file(&mut self, path: String);
 
-    fn call_javascript_function<T: Serialize>(
+    fn call_js<T: Serialize, R: for<'de> Deserialize<'de>>(
         &mut self,
         function_name: String,
         data: &T,
-    ) -> Result<String, String>;
+    ) -> Result<R, String>;
 }
 
 // Exposed to JS
