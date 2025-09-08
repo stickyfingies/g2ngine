@@ -22,6 +22,8 @@ fs_extra = "1.2"
 glob = "0.3"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 anyhow = "1.0"
 bytemuck = { version = "1.16", features = ["derive"] }
 winit = { version = "0.30", features = ["android-native-activity"] }
@@ -36,16 +38,25 @@ version = "0.24"
 default-features = false
 features = ["png", "jpeg"]
 
+# Web specific
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 reqwest = { version="0.11" }
 console_error_panic_hook = "0.1.6"
 console_log = "1.0"
 wgpu = { version = "26.0.1", features = ["webgl"] }
-wasm-bindgen = "0.2"
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 wasm-bindgen-futures = "0.4.30"
 web-sys = { version = "0.3", features = [
     "Document",
     "Window",
     "Element",
     "Location",
+    "HtmlScriptElement",
+    "HtmlHeadElement"
 ]}
+js-sys = "0.3"
+
+# Desktop specific
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+boa_engine = { version = "0.20" }
+boa_gc = "0.18"

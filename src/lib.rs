@@ -10,7 +10,12 @@ use winit::{
     window::Window,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+mod engine_desktop;
+#[cfg(target_arch = "wasm32")]
+mod engine_web;
 mod resources;
+mod scripting;
 mod state;
 mod texture; // mod before or, after, use?
 
@@ -142,6 +147,12 @@ pub fn run() -> anyhow::Result<()> {
     env_logger::init();
     #[cfg(target_arch = "wasm32")]
     console_log::init_with_level(log::Level::Info).unwrap_throw();
+
+    // Set up script engine
+    #[cfg(not(target_arch = "wasm32"))]
+    pollster::block_on(engine_desktop::do_js_stuff());
+    #[cfg(target_arch = "wasm32")]
+    pollster::block_on(engine_web::do_js_stuff());
 
     let event_loop = EventLoop::with_user_event().build()?;
     let mut app = App::new(
