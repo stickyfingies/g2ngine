@@ -1,12 +1,6 @@
-use crate::scripting::{ScriptResult, ScriptingHost, log_from_js};
+use crate::scripting::{ScriptEngine, log_from_js};
 use wasm_bindgen::prelude::*;
 use web_sys::*;
-
-// JS -> Rust: Use `#[wasm_bindgen]` to expose the function.
-#[wasm_bindgen]
-pub fn say(message: String) {
-    log_from_js(message);
-}
 
 fn setup_global_functions() -> Result<(), JsValue> {
     let window = web_sys::window().unwrap();
@@ -21,21 +15,29 @@ fn setup_global_functions() -> Result<(), JsValue> {
     Ok(())
 }
 
-pub async fn do_js_stuff() {
-    setup_global_functions().unwrap();
+pub struct ScriptEngineWeb;
 
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
+impl ScriptEngine for ScriptEngineWeb {
+    fn new() -> Self {
+        ScriptEngineWeb {}
+    }
 
-    let script = document
-        .create_element("script")
-        .unwrap()
-        .dyn_into::<HtmlScriptElement>()
-        .unwrap();
+    fn load_javascript_file(&self, path: String) {
+        setup_global_functions().unwrap();
 
-    script.set_src("/res/demo.js");
-    script.set_type("text/javascript");
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
 
-    let head = document.head().unwrap();
-    head.append_child(&script).unwrap();
+        let script = document
+            .create_element("script")
+            .unwrap()
+            .dyn_into::<HtmlScriptElement>()
+            .unwrap();
+
+        script.set_src(&format!("/res/{}", path));
+        script.set_type("text/javascript");
+
+        let head = document.head().unwrap();
+        head.append_child(&script).unwrap();
+    }
 }

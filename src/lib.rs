@@ -1,4 +1,4 @@
-use crate::state::State;
+use crate::{scripting::ScriptEngine, state::State};
 use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -141,6 +141,17 @@ impl ApplicationHandler<State> for App {
     }
 }
 
+fn create_script_engine() -> Box<dyn ScriptEngine> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Box::new(engine_web::ScriptEngineWeb::new())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Box::new(engine_desktop::ScriptEngineDesktop::new())
+    }
+}
+
 pub fn run() -> anyhow::Result<()> {
     // Set up logging
     #[cfg(not(target_arch = "wasm32"))]
@@ -149,10 +160,8 @@ pub fn run() -> anyhow::Result<()> {
     console_log::init_with_level(log::Level::Info).unwrap_throw();
 
     // Set up script engine
-    #[cfg(not(target_arch = "wasm32"))]
-    pollster::block_on(engine_desktop::do_js_stuff());
-    #[cfg(target_arch = "wasm32")]
-    pollster::block_on(engine_web::do_js_stuff());
+    let script_engine = create_script_engine();
+    script_engine.load_javascript_file("demo.js".into());
 
     let event_loop = EventLoop::with_user_event().build()?;
     let mut app = App::new(
