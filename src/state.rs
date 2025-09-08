@@ -1,12 +1,27 @@
 use crate::resources;
+use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
 use cgmath::prelude::*;
 use cgmath::{Matrix4, Point3, Quaternion, Vector3, Vector4};
+use serde::Serialize;
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
 use winit::window::Window;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::engine_desktop::ScriptEngineDesktop;
+#[cfg(target_arch = "wasm32")]
+use crate::engine_web::ScriptEngineWeb;
+
+#[derive(Serialize)]
+struct GameData {
+    player_name: String,
+    score: u32,
+    level: u8,
+    position: [f32; 2],
+}
 
 struct Instance {
     position: Vector3<f32>,
@@ -265,6 +280,10 @@ pub struct State {
     depth_texture: GpuTexture,
     window: Arc<Window>,
     clear_color: wgpu::Color,
+    #[cfg(not(target_arch = "wasm32"))]
+    script_engine: ScriptEngineDesktop,
+    #[cfg(target_arch = "wasm32")]
+    script_engine: ScriptEngineWeb,
 }
 
 impl State {
@@ -521,6 +540,14 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        // Initialize and load script engine
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut script_engine = ScriptEngineDesktop::new();
+        #[cfg(target_arch = "wasm32")]
+        let mut script_engine = ScriptEngineWeb::new();
+
+        script_engine.load_javascript_file("demo.js".into()).await;
+
         Ok(Self {
             surface,
             device,
@@ -548,6 +575,7 @@ impl State {
                 b: 0.3,
                 a: 1.0,
             },
+            script_engine,
         })
     }
 
@@ -592,6 +620,65 @@ impl State {
             b: color[2].clamp(0.0, 1.0) as f64,
             a: color[3].clamp(0.0, 1.0) as f64,
         };
+    }
+
+    pub fn call_demo_functions(&mut self) {
+        // Demonstrate calling JavaScript functions from Rust with simple data
+        match self
+            .script_engine
+            .call_javascript_function("getInfo".into(), &())
+        {
+            Ok(result) => log::info!("JS getInfo() returned: {}", result),
+            Err(e) => log::error!("Failed to call getInfo: {}", e),
+        }
+
+        match self
+            .script_engine
+            .call_javascript_function("greet".into(), &"Rust".to_string())
+        {
+            Ok(result) => log::info!("JS greet('Rust') returned: {}", result),
+            Err(e) => log::error!("Failed to call greet: {}", e),
+        }
+
+        match self
+            .script_engine
+            .call_javascript_function("add".into(), &[5, 3])
+        {
+            Ok(result) => log::info!("JS add([5, 3]) returned: {}", result),
+            Err(e) => log::error!("Failed to call add: {}", e),
+        }
+
+        // NEW: Demonstrate passing a Rust struct to JavaScript
+        let game_data = GameData {
+            player_name: "Alice".to_string(),
+            score: 1250,
+            level: 5,
+            position: [100.5, 200.0],
+        };
+
+        match self
+            .script_engine
+            .call_javascript_function("processGameData".into(), &game_data)
+        {
+            Ok(result) => log::info!("JS processGameData(struct) returned: {}", result),
+            Err(e) => log::error!("Failed to call processGameData: {}", e),
+        }
+    }
+
+    pub fn call_update_function(&mut self) -> Result<[f32; 4], String> {
+        match self
+            .script_engine
+            .call_javascript_function("update".into(), &())
+        {
+            Ok(result) => {
+                // Try to parse the result as a JSON array [r, g, b, a]
+                match serde_json::from_str::<[f32; 4]>(&result) {
+                    Ok(color) => Ok(color),
+                    Err(e) => Err(format!("Invalid color format: {} (error: {})", result, e)),
+                }
+            }
+            Err(e) => Err(format!("JS update() failed: {}", e)),
+        }
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
