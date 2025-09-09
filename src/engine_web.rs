@@ -13,6 +13,23 @@ fn setup_global_functions() -> Result<(), JsValue> {
         .expect("Failed to set global function");
     say_closure.forget();
 
+    let data_fn_closure = Closure::wrap(Box::new(move |float32_array: js_sys::Float32Array| {
+        // Work directly with the Float32Array
+        let mut floats = vec![0f32; float32_array.length() as usize];
+        float32_array.copy_to(&mut floats);
+
+        // Meaningful work!
+        web_sys::console::log_1(&format!("Updated data from JS: {:?}", floats).into());
+    }) as Box<dyn Fn(js_sys::Float32Array)>);
+
+    js_sys::Reflect::set(
+        &window,
+        &"data_fn".into(),
+        data_fn_closure.as_ref().unchecked_ref(),
+    )
+    .expect("Failed to set data_fn function");
+    data_fn_closure.forget();
+
     Ok(())
 }
 

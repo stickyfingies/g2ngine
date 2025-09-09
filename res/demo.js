@@ -11,6 +11,24 @@ function add([a, b]) {
   return parseInt(a) + parseInt(b);
 }
 
+function makeInstance() {
+  return {
+    position: {
+      x: 0,
+      y: 0,
+      z: 0,
+    },
+    rotation: {
+      v: {
+        x: 0,
+        y: 0,
+        z: 0,
+      },
+      s: 0,
+    },
+  };
+}
+
 function getInfo() {
   return "This is demo.js running";
 }
@@ -33,5 +51,8 @@ function update() {
   }
   return color;
 }
+
+let data = new Float32Array([0.0, 1.0, 2.5, -3.14, 42.0]);
+data_fn(data);
 
 four;

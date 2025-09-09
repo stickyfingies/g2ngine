@@ -3,7 +3,7 @@ use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
 use cgmath::prelude::*;
 use cgmath::{Matrix4, Point3, Quaternion, Vector3, Vector4};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::event_loop::ActiveEventLoop;
@@ -15,6 +15,11 @@ use crate::engine_desktop::ScriptEngineDesktop;
 #[cfg(target_arch = "wasm32")]
 use crate::engine_web::ScriptEngineWeb;
 
+#[cfg(not(target_arch = "wasm32"))]
+type ScriptEnginePlatform = ScriptEngineDesktop;
+#[cfg(target_arch = "wasm32")]
+type ScriptEnginePlatform = ScriptEngineWeb;
+
 #[derive(Serialize)]
 struct GameData {
     player_name: String,
@@ -23,11 +28,14 @@ struct GameData {
     position: [f32; 2],
 }
 
+/** Holds the components of a transform. */
+#[derive(Debug, Deserialize)]
 struct Instance {
     position: Vector3<f32>,
     rotation: Quaternion<f32>,
 }
 
+/** Holds the model matrix of a transform. */
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct InstanceRaw {
@@ -350,6 +358,25 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        // Initialize and load script engine
+        let mut script_engine = ScriptEnginePlatform::new();
+
+        script_engine.load_javascript_file("demo.js".into()).await;
+
+        if let Err(e) = Self::call_demo_functions(&mut script_engine) {
+            log::warn!("Demo functions failed: {}", e);
+        }
+
+        let result: Result<Instance, String> = script_engine.call_js("makeInstance".into(), &());
+        match result {
+            Ok(r) => {
+                log::info!("JS returned: {:?}", r);
+            }
+            Err(e) => {
+                log::warn!("JS failed: {}", e);
+            }
+        };
+
         let depth_texture = GpuTexture::create_depth_texture(&device, &config, "Depth Texture");
 
         let diffuse_bytes = resources::load_binary("happy-tree.png").await.unwrap();
@@ -540,14 +567,6 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        // Initialize and load script engine
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut script_engine = ScriptEngineDesktop::new();
-        #[cfg(target_arch = "wasm32")]
-        let mut script_engine = ScriptEngineWeb::new();
-
-        script_engine.load_javascript_file("demo.js".into()).await;
-
         Ok(Self {
             surface,
             device,
@@ -633,17 +652,15 @@ impl State {
         };
     }
 
-    pub fn call_demo_functions(&mut self) -> Result<(), String> {
+    pub fn call_demo_functions(script_engine: &mut ScriptEnginePlatform) -> Result<(), String> {
         // Demonstrate calling JavaScript functions from Rust with simple data
-        let result: String = self.script_engine.call_js("getInfo".into(), &())?;
+        let result: String = script_engine.call_js("getInfo".into(), &())?;
         log::info!("JS getInfo() returned: {}", result);
 
-        let result: String = self
-            .script_engine
-            .call_js("greet".into(), &"Rust".to_string())?;
+        let result: String = script_engine.call_js("greet".into(), &"Rust".to_string())?;
         log::info!("JS greet('Rust') returned: {}", result);
 
-        let result: i32 = self.script_engine.call_js("add".into(), &[5, 3])?;
+        let result: f32 = script_engine.call_js("add".into(), &[5, 3])?;
         log::info!("JS add([5, 3]) returned: {}", result);
 
         // NEW: Demonstrate passing a Rust struct to JavaScript
@@ -654,9 +671,7 @@ impl State {
             position: [100.5, 200.0],
         };
 
-        let _result: () = self
-            .script_engine
-            .call_js("processGameData".into(), &game_data)?;
+        let _result: () = script_engine.call_js("processGameData".into(), &game_data)?;
 
         Ok(())
     }
