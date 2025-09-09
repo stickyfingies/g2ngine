@@ -2,14 +2,12 @@ use boa_engine::builtins::array_buffer::ArrayBuffer;
 use boa_engine::{
     Context, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
 };
-use std::cell::RefCell;
-use std::rc::Rc;
 
 use crate::resources::load_string;
 use crate::scripting::{ScriptEngine, log_from_js};
 
 /** JavaScript moves a Float32Array into Rust */
-fn take_buffer(_this: &JsValue, args: &[JsValue], _context: &mut Context) -> JsResult<JsValue> {
+fn take_buffer(_this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     // Argument(any)
     let js_typed_array = args.get(0).and_then(|val| val.as_object()).ok_or_else(|| {
         JsError::from(JsNativeError::typ().with_message("Argument must be a TypedArray"))
@@ -17,7 +15,7 @@ fn take_buffer(_this: &JsValue, args: &[JsValue], _context: &mut Context) -> JsR
 
     // Argument(any) -> Sub-property(ArrayBuffer)
     let js_buffer_obj = js_typed_array
-        .get(JsString::from("buffer"), _context)?
+        .get(JsString::from("buffer"), context)?
         .as_object()
         .cloned()
         .ok_or_else(|| {
@@ -51,7 +49,7 @@ fn take_buffer(_this: &JsValue, args: &[JsValue], _context: &mut Context) -> JsR
     Ok(JsValue::undefined())
 }
 
-fn setup_global_functions(context: &mut Context, data: Rc<RefCell<Vec<f32>>>) {
+fn setup_global_functions(context: &mut Context) {
     let log_fn = NativeFunction::from_fn_ptr(|_this, args, _context| {
         let msg = args.get(0).cloned().unwrap_or_default();
         let msg_string = msg.to_string(_context).unwrap().to_std_string_lossy();
@@ -69,16 +67,13 @@ fn setup_global_functions(context: &mut Context, data: Rc<RefCell<Vec<f32>>>) {
 
 pub struct ScriptEngineDesktop {
     context: Context,
-    data: Rc<RefCell<Vec<f32>>>,
 }
 
 impl ScriptEngine for ScriptEngineDesktop {
     fn new() -> Self {
-        let context = Context::default();
-        let data = Rc::new(RefCell::new(vec![
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 10.0, 20.0, 30.0, 1.0,
-        ]));
-        ScriptEngineDesktop { context, data }
+        let mut context = Context::default();
+        setup_global_functions(&mut context);
+        ScriptEngineDesktop { context }
     }
 
     async fn load_javascript_file(&mut self, path: String) {
@@ -86,8 +81,6 @@ impl ScriptEngine for ScriptEngineDesktop {
             .await
             .expect("Failed to load javascript file");
         let js_source = Source::from_bytes(js_code.as_str());
-
-        setup_global_functions(&mut self.context, self.data.clone());
 
         let result = self
             .context

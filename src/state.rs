@@ -361,6 +361,9 @@ impl State {
         // Initialize and load script engine
         let mut script_engine = ScriptEnginePlatform::new();
 
+        script_engine
+            .load_javascript_file("gl-matrix.min.js".into())
+            .await;
         script_engine.load_javascript_file("demo.js".into()).await;
 
         if let Err(e) = Self::call_demo_functions(&mut script_engine) {
