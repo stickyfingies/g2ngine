@@ -128,4 +128,53 @@ impl ScriptEngine for ScriptEngineDesktop {
             )
         })
     }
+
+    fn call_js_float32array<T: serde::Serialize>(
+        &mut self,
+        function_name: String,
+        data: &T,
+    ) -> Result<Vec<f32>, String> {
+        let json_data =
+            serde_json::to_string(data).map_err(|e| format!("Failed to serialize data: {}", e))?;
+
+        let function_call = format!("{}({})", function_name, json_data);
+
+        log::info!("Before {}", function_call);
+        let source = Source::from_bytes(&function_call);
+        let result = self
+            .context
+            .eval(source)
+            .map_err(|e| format!("Function call failed: {}", e))?;
+        log::info!("After {}", function_call);
+
+        // Extract typed array object
+        let js_typed_array = result
+            .as_object()
+            .ok_or_else(|| "Function must return a TypedArray".to_string())?;
+
+        // Get the ArrayBuffer from the typed array
+        let js_buffer_obj = js_typed_array
+            .get(JsString::from("buffer"), &mut self.context)
+            .map_err(|e| format!("Failed to get buffer property: {}", e))?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| "Could not get ArrayBuffer from object".to_string())?;
+
+        // Extract bytes from ArrayBuffer
+        if let Some(mut array_buffer) = js_buffer_obj.downcast_mut::<ArrayBuffer>() {
+            if let Some(byte_data) = array_buffer.detach(&JsValue::undefined()).unwrap() {
+                // Convert bytes to f32 values
+                let floats: Vec<f32> = byte_data
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                    .collect();
+
+                Ok(floats)
+            } else {
+                Err("Failed to get data from ArrayBuffer".to_string())
+            }
+        } else {
+            Err("Result is not a valid ArrayBuffer".to_string())
+        }
+    }
 }

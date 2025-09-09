@@ -20,34 +20,11 @@ type ScriptEnginePlatform = ScriptEngineDesktop;
 #[cfg(target_arch = "wasm32")]
 type ScriptEnginePlatform = ScriptEngineWeb;
 
-#[derive(Serialize)]
-struct GameData {
-    player_name: String,
-    score: u32,
-    level: u8,
-    position: [f32; 2],
-}
-
-/** Holds the components of a transform. */
-#[derive(Debug, Deserialize)]
-struct Instance {
-    position: Vector3<f32>,
-    rotation: Quaternion<f32>,
-}
-
 /** Holds the model matrix of a transform. */
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct InstanceRaw {
     model: [[f32; 4]; 4],
-}
-
-impl Instance {
-    fn to_raw(&self) -> InstanceRaw {
-        InstanceRaw {
-            model: (Matrix4::from_translation(self.position) * Matrix4::from(self.rotation)).into(),
-        }
-    }
 }
 
 impl InstanceRaw {
@@ -138,13 +115,6 @@ const VERTICES: &[Vertex] = &[
 ];
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, /* padding */ 0];
-
-const NUM_INSTANCES_PER_ROW: u32 = 10;
-const INSTANCE_DISPLACEMENT: Vector3<f32> = Vector3::new(
-    NUM_INSTANCES_PER_ROW as f32 * 0.5,
-    0.0,
-    NUM_INSTANCES_PER_ROW as f32 * 0.5,
-);
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::from_cols(
@@ -283,7 +253,7 @@ pub struct State {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    instances: Vec<Instance>,
+    num_instances: usize,
     instance_buffer: wgpu::Buffer,
     depth_texture: GpuTexture,
     window: Arc<Window>,
@@ -369,16 +339,6 @@ impl State {
         if let Err(e) = Self::call_demo_functions(&mut script_engine) {
             log::warn!("Demo functions failed: {}", e);
         }
-
-        let result: Result<Instance, String> = script_engine.call_js("makeInstance".into(), &());
-        match result {
-            Ok(r) => {
-                log::info!("JS returned: {:?}", r);
-            }
-            Err(e) => {
-                log::warn!("JS failed: {}", e);
-            }
-        };
 
         let depth_texture = GpuTexture::create_depth_texture(&device, &config, "Depth Texture");
 
@@ -544,29 +504,49 @@ impl State {
 
         let num_indices = INDICES.len() as u32;
 
-        let instances = (0..NUM_INSTANCES_PER_ROW)
-            .flat_map(|z| {
-                (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let position = Vector3 {
-                        x: x as f32,
-                        y: 0.0,
-                        z: z as f32,
-                    } - INSTANCE_DISPLACEMENT;
-                    let rotation = if position.is_zero() {
-                        Quaternion::from_axis_angle(Vector3::unit_y(), cgmath::Deg(0.0))
-                    } else {
-                        Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                    };
+        // Get position+rotation data from JS script using optimized Float32Array transfer
+        let pos_rot_data: Vec<f32> = script_engine
+            .call_js_float32array("makeInstances".into(), &())
+            .unwrap();
 
-                    Instance { position, rotation }
-                })
-            })
-            .collect::<Vec<_>>();
+        // Parse interleaved data: [pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w, ...]
+        // 7 floats per instance
+        let num_instances = pos_rot_data.len() / 7;
+        let mut instance_matrices = Vec::with_capacity(num_instances * 16);
 
-        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        for i in 0..num_instances {
+            let base_idx = i * 7;
+
+            // Extract position and rotation
+            let position = Vector3::new(
+                pos_rot_data[base_idx + 0],
+                pos_rot_data[base_idx + 1],
+                pos_rot_data[base_idx + 2],
+            );
+            let rotation = Quaternion::new(
+                pos_rot_data[base_idx + 6], // w component first in cgmath
+                pos_rot_data[base_idx + 3], // x
+                pos_rot_data[base_idx + 4], // y
+                pos_rot_data[base_idx + 5], // z
+            );
+
+            // Compute 4x4 transformation matrix in Rust (fast!)
+            let matrix = Matrix4::from_translation(position) * Matrix4::from(rotation);
+
+            // Convert to column-major array for GPU
+            let matrix_array: [[f32; 4]; 4] = matrix.into();
+
+            // Flatten into the instance buffer
+            for col in &matrix_array {
+                for &elem in col {
+                    instance_matrices.push(elem);
+                }
+            }
+        }
+
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
+            contents: bytemuck::cast_slice(&instance_matrices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -587,7 +567,7 @@ impl State {
             camera_buffer,
             camera_bind_group,
             camera_uniform,
-            instances,
+            num_instances,
             instance_buffer,
             depth_texture,
             window,
@@ -655,26 +635,29 @@ impl State {
         };
     }
 
-    pub fn call_demo_functions(script_engine: &mut ScriptEnginePlatform) -> Result<(), String> {
-        // Demonstrate calling JavaScript functions from Rust with simple data
-        let result: String = script_engine.call_js("getInfo".into(), &())?;
-        log::info!("JS getInfo() returned: {}", result);
+    pub fn call_demo_functions(_script_engine: &mut ScriptEnginePlatform) -> Result<(), String> {
+        // let result: Vec<f32> = _script_engine.call_js_float32array("makeInstances".into(), &())?;
+        // log::info!("makeInstances(): {:?}", result);
 
-        let result: String = script_engine.call_js("greet".into(), &"Rust".to_string())?;
-        log::info!("JS greet('Rust') returned: {}", result);
+        // // Demonstrate calling JavaScript functions from Rust with simple data
+        // let result: String = script_engine.call_js("getInfo".into(), &())?;
+        // log::info!("JS getInfo() returned: {}", result);
 
-        let result: f32 = script_engine.call_js("add".into(), &[5, 3])?;
-        log::info!("JS add([5, 3]) returned: {}", result);
+        // let result: String = script_engine.call_js("greet".into(), &"Rust".to_string())?;
+        // log::info!("JS greet('Rust') returned: {}", result);
 
-        // NEW: Demonstrate passing a Rust struct to JavaScript
-        let game_data = GameData {
-            player_name: "Alice".to_string(),
-            score: 1250,
-            level: 5,
-            position: [100.5, 200.0],
-        };
+        // let result: f32 = script_engine.call_js("add".into(), &[5, 3])?;
+        // log::info!("JS add([5, 3]) returned: {}", result);
 
-        let _result: () = script_engine.call_js("processGameData".into(), &game_data)?;
+        // // NEW: Demonstrate passing a Rust struct to JavaScript
+        // let game_data = GameData {
+        //     player_name: "Alice".to_string(),
+        //     score: 1250,
+        //     level: 5,
+        //     position: [100.5, 200.0],
+        // };
+
+        // let _result: () = script_engine.call_js("processGameData".into(), &game_data)?;
 
         Ok(())
     }
@@ -731,7 +714,7 @@ impl State {
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances as _);
         }
 
         self.queue.submit(iter::once(encoder.finish()));

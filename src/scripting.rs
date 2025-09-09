@@ -12,6 +12,12 @@ pub trait ScriptEngine {
         function_name: String,
         data: &T,
     ) -> Result<R, String>;
+
+    fn call_js_float32array<T: Serialize>(
+        &mut self,
+        function_name: String,
+        data: &T,
+    ) -> Result<Vec<f32>, String>;
 }
 
 // Exposed to JS

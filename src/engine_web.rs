@@ -148,4 +148,38 @@ impl ScriptEngine for ScriptEngineWeb {
         serde_json::from_value(json_value)
             .map_err(|e| format!("Failed to convert result to target type: {}", e))
     }
+
+    fn call_js_float32array<T: serde::Serialize>(
+        &mut self,
+        function_name: String,
+        data: &T,
+    ) -> Result<Vec<f32>, String> {
+        let window = web_sys::window().ok_or("No window object available")?;
+
+        let function = js_sys::Reflect::get(&window, &function_name.as_str().into())
+            .map_err(|_| format!("Failed to get function '{}'", function_name))?;
+
+        if !function.is_function() {
+            return Err(format!("'{}' is not a function", function_name));
+        }
+
+        let json_data =
+            serde_json::to_string(data).map_err(|e| format!("Failed to serialize data: {}", e))?;
+
+        let js_data = js_sys::JSON::parse(&json_data)
+            .map_err(|e| format!("Failed to parse JSON data: {:?}", e))?;
+
+        let result = js_sys::Function::from(function)
+            .call1(&window, &js_data)
+            .map_err(|e| format!("Function call failed: {:?}", e))?;
+
+        // Convert result to Float32Array
+        let float32_array = js_sys::Float32Array::new(&result);
+
+        // Extract data efficiently
+        let mut floats = vec![0f32; float32_array.length() as usize];
+        float32_array.copy_to(&mut floats);
+
+        Ok(floats)
+    }
 }
