@@ -32,6 +32,7 @@ log = "0.4"
 wgpu = "26.0.1"
 pollster = "0.3"
 cgmath = { version = "0.18", features = ["serde"] }
+tobj = { version = "3.2", default-features = false, features = ["async"] }
 
 [dependencies.image]
 version = "0.24"

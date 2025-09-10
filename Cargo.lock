@@ -965,6 +965,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tobj",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3096,6 +3097,12 @@ dependencies = [
  "displaydoc",
  "zerovec 0.11.4",
 ]
+
+[[package]]
+name = "tobj"
+version = "3.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57381207291289bad19de63acd3fbf5948ff99b2868116c367b7224c37d55f90"
 
 [[package]]
 name = "tokio"

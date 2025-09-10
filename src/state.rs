@@ -1,3 +1,4 @@
+use crate::model::{self, ModelVertex, Vertex};
 use crate::resources;
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
@@ -61,60 +62,6 @@ impl InstanceRaw {
         }
     }
 }
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-}
-
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-            ],
-        }
-    }
-}
-
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        tex_coords: [0.4131759, 0.00759614],
-    }, // A
-    Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        tex_coords: [0.0048659444, 0.43041354],
-    }, // B
-    Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        tex_coords: [0.28081453, 0.949397],
-    }, // C
-    Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        tex_coords: [0.85967, 0.84732914],
-    }, // D
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        tex_coords: [0.9414737, 0.2652641],
-    }, // E
-];
-
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4, /* padding */ 0];
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::from_cols(
@@ -242,12 +189,7 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
     #[allow(dead_code)]
-    diffuse_texture: GpuTexture,
-    diffuse_bind_group: wgpu::BindGroup,
     camera: Camera,
     camera_controller: CameraController,
     camera_uniform: CameraUniform,
@@ -258,6 +200,7 @@ pub struct State {
     depth_texture: GpuTexture,
     window: Arc<Window>,
     clear_color: wgpu::Color,
+    obj_model: model::Model,
     #[cfg(not(target_arch = "wasm32"))]
     script_engine: ScriptEngineDesktop,
     #[cfg(target_arch = "wasm32")]
@@ -342,10 +285,6 @@ impl State {
 
         let depth_texture = GpuTexture::create_depth_texture(&device, &config, "Depth Texture");
 
-        let diffuse_bytes = resources::load_binary("happy-tree.png").await.unwrap();
-        let diffuse_texture =
-            GpuTexture::from_bytes(&device, &queue, &diffuse_bytes[..], "happy-tree.png").unwrap();
-
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -369,29 +308,14 @@ impl State {
                 label: Some("texture_bind_group_layout"),
             });
 
-        let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-            label: Some("diffuse_bind_group"),
-        });
-
         let camera = Camera {
-            eye: (0.0, 1.0, 2.0).into(),
+            eye: (0.0, 5.0, 10.0).into(),
             target: (0.0, 0.0, 0.0).into(),
             up: Vector3::unit_y(),
             aspect: config.width as f32 / config.height as f32,
             fovy: 45.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 1000.0,
         };
 
         let camera_controller = CameraController::new(0.2);
@@ -449,7 +373,7 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc(), InstanceRaw::desc()],
+                buffers: &[ModelVertex::desc(), InstanceRaw::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -489,20 +413,6 @@ impl State {
             multiview: None,
             cache: None,
         });
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let num_indices = INDICES.len() as u32;
 
         // Get position+rotation data from JS script using optimized Float32Array transfer
         let pos_rot_data: Vec<f32> = script_engine
@@ -550,6 +460,10 @@ impl State {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        let obj_model = model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
+            .await
+            .unwrap();
+
         Ok(Self {
             surface,
             device,
@@ -557,11 +471,6 @@ impl State {
             config,
             is_surface_configured: false,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
-            diffuse_texture,
-            diffuse_bind_group,
             camera,
             camera_controller,
             camera_buffer,
@@ -578,6 +487,7 @@ impl State {
                 a: 1.0,
             },
             script_engine,
+            obj_model,
         })
     }
 
@@ -709,12 +619,17 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.num_instances as _);
+
+            use model::DrawModel;
+            let mesh = &self.obj_model.meshes[0];
+            let material = &self.obj_model.materials[mesh.material];
+            render_pass.draw_mesh_instanced(
+                mesh,
+                material,
+                0..self.num_instances as u32,
+                &self.camera_bind_group,
+            );
         }
 
         self.queue.submit(iter::once(encoder.finish()));

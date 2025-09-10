@@ -2,6 +2,7 @@
 mod engine_desktop;
 #[cfg(target_arch = "wasm32")]
 mod engine_web;
+mod model;
 mod resources;
 mod scripting;
 mod state;
@@ -9,7 +10,6 @@ mod texture;
 
 use crate::state::State;
 use std::sync::Arc;
-
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use winit::{
