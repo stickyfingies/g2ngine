@@ -622,11 +622,8 @@ impl State {
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
             use model::DrawModel;
-            let mesh = &self.obj_model.meshes[0];
-            let material = &self.obj_model.materials[mesh.material];
-            render_pass.draw_mesh_instanced(
-                mesh,
-                material,
+            render_pass.draw_model_instanced(
+                &self.obj_model,
                 0..self.num_instances as u32,
                 &self.camera_bind_group,
             );
