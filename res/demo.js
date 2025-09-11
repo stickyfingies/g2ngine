@@ -3,8 +3,8 @@ const { vec3, quat, mat4 } = glMatrix;
 // Init system
 
 function makeInstances() {
-  const SPACE_BETWEEN = 1;
-  const NUM_INSTANCES_PER_ROW = 100;
+  const SPACE_BETWEEN = 3;
+  const NUM_INSTANCES_PER_ROW = 30;
   const total_instances = NUM_INSTANCES_PER_ROW * NUM_INSTANCES_PER_ROW;
 
   // Interleaved format: [pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w, ...]
@@ -24,7 +24,7 @@ function makeInstances() {
       const position = vec3.multiply(
         vec3.create(),
         vec3.subtract(vec3.create(), vec3.fromValues(x, 0, z), displacement),
-        displacement,
+        vec3.fromValues(SPACE_BETWEEN, SPACE_BETWEEN, SPACE_BETWEEN),
       );
 
       let rotation = quat.create();
