@@ -1,10 +1,12 @@
+use crate::gui::EguiRenderer;
 use crate::model::{self, DrawLight, ModelVertex, Vertex};
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
+use crate::ui::UIState;
 use crate::{camera, resources};
 use cgmath::{Matrix3, prelude::*};
-use cgmath::{Matrix4, Point3, Quaternion, Vector3, Vector4};
-use serde::{Deserialize, Serialize};
+use cgmath::{Matrix4, Quaternion, Vector3};
+use egui_wgpu::ScreenDescriptor;
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
@@ -174,6 +176,8 @@ fn create_render_pipeline(
 }
 
 pub struct State {
+    // Put egui_renderer first so it gets dropped before GPU resources
+    egui_renderer: EguiRenderer,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -202,6 +206,7 @@ pub struct State {
     script_engine: ScriptEngineDesktop,
     #[cfg(target_arch = "wasm32")]
     script_engine: ScriptEngineWeb,
+    ui_state: UIState,
 }
 
 impl State {
@@ -481,7 +486,16 @@ impl State {
             .await
             .unwrap();
 
+        let egui_renderer = EguiRenderer::new(
+            &device,
+            config.format,
+            None, // egui doesn't need depth testing - it renders on top
+            1,
+            &window,
+        );
+
         Ok(Self {
+            egui_renderer,
             surface,
             device,
             queue,
@@ -511,6 +525,7 @@ impl State {
             },
             script_engine,
             obj_model,
+            ui_state: UIState::default(),
         })
     }
 
@@ -537,6 +552,10 @@ impl State {
     }
 
     pub fn input(&mut self, event_loop: &ActiveEventLoop, event: &WindowEvent) -> bool {
+        if self.egui_renderer.handle_input(&self.window, event) {
+            return true;
+        }
+
         match event {
             WindowEvent::KeyboardInput {
                 event:
@@ -639,7 +658,7 @@ impl State {
         Ok(())
     }
 
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, dt: web_time::Duration) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
 
         if !self.is_surface_configured {
@@ -671,7 +690,6 @@ impl State {
                         load: wgpu::LoadOp::Clear(self.clear_color),
                         store: wgpu::StoreOp::Store,
                     },
-                    depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth_texture.view,
@@ -705,6 +723,24 @@ impl State {
                 &self.light_bind_group,
             );
         }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.config.width, self.config.height],
+            pixels_per_point: self.window().scale_factor() as f32,
+        };
+
+        let ui_state = &mut self.ui_state;
+        self.egui_renderer.draw(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &self.window,
+            &view,
+            screen_descriptor,
+            |ctx| {
+                crate::ui::demo_ui(ctx, ui_state, dt.as_millis() as f32);
+            },
+        );
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();

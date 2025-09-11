@@ -3,11 +3,13 @@ mod camera;
 mod engine_desktop;
 #[cfg(target_arch = "wasm32")]
 mod engine_web;
+mod gui;
 mod model;
 mod resources;
 mod scripting;
 mod state;
 mod texture;
+mod ui;
 
 use crate::state::State;
 use std::sync::Arc;
@@ -17,7 +19,6 @@ use winit::{
     application::ApplicationHandler,
     event::*,
     event_loop::{ActiveEventLoop, EventLoop},
-    keyboard::PhysicalKey,
     window::Window,
 };
 
@@ -105,8 +106,8 @@ impl ApplicationHandler<State> for App {
 
     fn device_event(
         &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: DeviceId,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
         event: DeviceEvent,
     ) {
         let state = match &mut self.state {
@@ -139,7 +140,7 @@ impl ApplicationHandler<State> for App {
                 let dt = now - self.last_render_time;
                 self.last_render_time = now;
                 state.update(dt);
-                match state.render() {
+                match state.render(dt) {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost, outdated, or suboptimal
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {

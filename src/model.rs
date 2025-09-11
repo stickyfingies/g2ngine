@@ -54,12 +54,14 @@ pub struct Model {
     pub materials: Vec<Material>,
 }
 
+#[allow(dead_code)]
 pub struct Material {
     pub name: String,
     pub diffuse_texture: texture::GpuTexture,
     pub bind_group: wgpu::BindGroup,
 }
 
+#[allow(dead_code)]
 pub struct Mesh {
     pub name: String,
     pub vertex_buffer: wgpu::Buffer,

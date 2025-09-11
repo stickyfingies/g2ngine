@@ -3,7 +3,7 @@ use std::f32::consts::FRAC_PI_2;
 use web_time::Duration;
 use winit::dpi::PhysicalPosition;
 use winit::event::*;
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::KeyCode;
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::from_cols(
