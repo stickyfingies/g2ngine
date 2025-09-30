@@ -11,6 +11,7 @@ mod resources;
 mod scripting;
 mod state;
 mod texture;
+pub mod world;
 
 use crate::state::State;
 use std::sync::Arc;

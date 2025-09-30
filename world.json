@@ -1,0 +1,76 @@
+{
+  "background_color": [
+    0.1,
+    0.2,
+    0.3,
+    1.0
+  ],
+  "camera": {
+    "position": [
+      7.768433e-7,
+      11.468514,
+      27.772112
+    ],
+    "yaw_deg": -90.0,
+    "pitch_deg": -20.0,
+    "fovy_deg": 45.0,
+    "znear": 0.1,
+    "zfar": 1000.0
+  },
+  "lights": [
+    {
+      "position": [
+        2.0,
+        2.0,
+        2.0
+      ],
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "position": [
+        -2.0,
+        2.0,
+        2.0
+      ],
+      "color": [
+        1.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "particle_systems": [
+    {
+      "type": "grid",
+      "name": "main",
+      "params": {
+        "rows": 30,
+        "spacing": 3.0,
+        "center": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "type": "sphere",
+      "name": "Sphere_1",
+      "params": {
+        "count": 200,
+        "radius": 15.2,
+        "center": [
+          0.0,
+          21.0,
+          0.0
+        ]
+      }
+    }
+  ]
+}

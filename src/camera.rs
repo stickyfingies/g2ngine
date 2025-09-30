@@ -18,8 +18,8 @@ const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.001;
 #[derive(Debug)]
 pub struct Camera {
     pub position: Point3<f32>,
-    yaw: Rad<f32>,
-    pitch: Rad<f32>,
+    pub yaw: Rad<f32>,
+    pub pitch: Rad<f32>,
 }
 
 impl Camera {
@@ -48,10 +48,10 @@ impl Camera {
 }
 
 pub struct Projection {
-    aspect: f32,
-    fovy: Rad<f32>,
-    znear: f32,
-    zfar: f32,
+    pub aspect: f32,
+    pub fovy: Rad<f32>,
+    pub znear: f32,
+    pub zfar: f32,
 }
 
 impl Projection {

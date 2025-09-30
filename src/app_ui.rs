@@ -2,6 +2,20 @@ use crate::particle_system::{ParticleSystemManager, ParticleSystemType};
 use crate::state::LightManager;
 use egui::{Align2, Context};
 
+pub struct UiActions {
+    pub save_requested: bool,
+    pub load_requested: bool,
+}
+
+impl Default for UiActions {
+    fn default() -> Self {
+        Self {
+            save_requested: false,
+            load_requested: false,
+        }
+    }
+}
+
 pub fn app_ui(
     ctx: &Context,
     clear_color: &mut wgpu::Color,
@@ -12,7 +26,8 @@ pub fn app_ui(
     queue: &wgpu::Queue,
     device: &wgpu::Device,
     particle_uniform_bind_group_layout: &wgpu::BindGroupLayout,
-) {
+) -> UiActions {
+    let mut actions = UiActions::default();
     egui::Window::new("Demo GUI")
         .default_open(true)
         .max_width(400.0)
@@ -403,6 +418,23 @@ pub fn app_ui(
 
             ui.separator();
 
+            // Save/Load World
+            ui.collapsing("💾 Save/Load World", |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("💾 Save World").clicked() {
+                        actions.save_requested = true;
+                    }
+
+                    if ui.button("📂 Load World").clicked() {
+                        actions.load_requested = true;
+                    }
+                });
+
+                ui.label("Saves to: world.json");
+            });
+
+            ui.separator();
+
             ui.label(format!("Delta Time: {:.2} ms", delta_time_ms));
             ui.label(format!("FPS: {:.1}", 1000.0 / delta_time_ms));
 
@@ -411,4 +443,6 @@ pub fn app_ui(
             ui.label("Your 3D scene continues to render in the background!");
             ui.label("Camera controls should still work when not over the GUI.");
         });
+
+    actions
 }

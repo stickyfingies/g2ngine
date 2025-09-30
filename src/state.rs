@@ -2,11 +2,13 @@ use crate::egui::EguiRenderer;
 use crate::model::{self, DrawLight, ModelVertex, Vertex};
 use crate::particle_system::{
     GridParticleSystem, InstanceRaw, ParticleSystemDesc, ParticleSystemManager,
+    SphereParticleSystem,
 };
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
+use crate::world::{CameraData, LightData as WorldLightData, ParticleSystemData, WorldData};
 use crate::{camera, resources};
-use cgmath::Matrix4;
+use cgmath::{Deg, Matrix4, Point3, Rad};
 use egui_wgpu::ScreenDescriptor;
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
@@ -810,7 +812,7 @@ impl State {
         let light_manager = &mut self.light_manager;
         let light_buffer = &self.light_buffer;
         let queue = &self.queue;
-        self.egui_renderer.draw(
+        let ui_actions = self.egui_renderer.draw(
             &self.device,
             &self.queue,
             &mut encoder,
@@ -828,13 +830,213 @@ impl State {
                     queue,
                     &self.device,
                     &self.particle_uniform_bind_group_layout,
-                );
+                )
             },
         );
+
+        // Handle UI actions after rendering
+        if ui_actions.save_requested {
+            if let Err(e) = self.save_world_to_file("world.json") {
+                log::error!("Failed to save world: {}", e);
+            }
+        }
+        if ui_actions.load_requested {
+            if let Err(e) = self.load_world_from_file("world.json") {
+                log::error!("Failed to load world: {}", e);
+            }
+        }
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
+        Ok(())
+    }
+
+    /// Export current world state to a serializable format
+    pub fn export_world(&self) -> WorldData {
+        // Export camera
+        let camera_data = CameraData {
+            position: [
+                self.camera.position.x,
+                self.camera.position.y,
+                self.camera.position.z,
+            ],
+            yaw_deg: Rad::from(self.camera.yaw).0.to_degrees(),
+            pitch_deg: Rad::from(self.camera.pitch).0.to_degrees(),
+            fovy_deg: Rad::from(self.projection.fovy).0.to_degrees(),
+            znear: self.projection.znear,
+            zfar: self.projection.zfar,
+        };
+
+        // Export lights
+        let mut lights = Vec::new();
+        for i in 0..self.light_manager.max_lights() {
+            if let Some(light) = self.light_manager.get_light(i) {
+                lights.push(WorldLightData {
+                    position: [light.position[0], light.position[1], light.position[2]],
+                    color: light.color,
+                });
+            }
+        }
+
+        // Export particle systems
+        let mut particle_systems = Vec::new();
+        for (name, grid) in self.particle_system_manager.grids() {
+            particle_systems.push(ParticleSystemData::Grid {
+                name: name.clone(),
+                params: grid.params().clone(),
+            });
+        }
+        for (name, sphere) in self.particle_system_manager.spheres() {
+            particle_systems.push(ParticleSystemData::Sphere {
+                name: name.clone(),
+                params: sphere.params().clone(),
+            });
+        }
+
+        // Export background color
+        let background_color = [
+            self.clear_color.r as f32,
+            self.clear_color.g as f32,
+            self.clear_color.b as f32,
+            self.clear_color.a as f32,
+        ];
+
+        WorldData {
+            background_color,
+            camera: camera_data,
+            lights,
+            particle_systems,
+        }
+    }
+
+    /// Load world state from serialized data
+    pub fn load_world(&mut self, data: WorldData) {
+        // Load camera
+        self.camera = camera::Camera::new(
+            Point3::new(
+                data.camera.position[0],
+                data.camera.position[1],
+                data.camera.position[2],
+            ),
+            Deg(data.camera.yaw_deg),
+            Deg(data.camera.pitch_deg),
+        );
+
+        self.projection.fovy = Deg(data.camera.fovy_deg).into();
+        self.projection.znear = data.camera.znear;
+        self.projection.zfar = data.camera.zfar;
+
+        // Update camera uniform
+        self.camera_uniform
+            .update_view_proj(&self.camera, &self.projection);
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&[self.camera_uniform]),
+        );
+
+        // Load lights
+        self.light_manager = LightManager::new();
+        for light_data in data.lights {
+            self.light_manager
+                .add_light(light_data.position, light_data.color);
+        }
+
+        // Sync lights to GPU
+        let lights = self.light_manager.sync_to_gpu();
+        self.queue
+            .write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[lights]));
+        self.light_manager.clear_dirty();
+
+        // Load particle systems
+        self.particle_system_manager = ParticleSystemManager::new();
+        for ps_data in data.particle_systems {
+            match ps_data {
+                ParticleSystemData::Grid { name, params } => {
+                    let grid = GridParticleSystem::new(
+                        &self.device,
+                        name.clone(),
+                        params,
+                        &self.particle_uniform_bind_group_layout,
+                    );
+                    self.particle_system_manager.add_grid(name, grid);
+                }
+                ParticleSystemData::Sphere { name, params } => {
+                    let sphere = SphereParticleSystem::new(
+                        &self.device,
+                        name.clone(),
+                        params,
+                        &self.particle_uniform_bind_group_layout,
+                    );
+                    self.particle_system_manager.add_sphere(name, sphere);
+                }
+            }
+        }
+
+        // Load background color
+        self.clear_color = wgpu::Color {
+            r: data.background_color[0] as f64,
+            g: data.background_color[1] as f64,
+            b: data.background_color[2] as f64,
+            a: data.background_color[3] as f64,
+        };
+    }
+    /// Save world to JSON file (desktop) or LocalStorage (web)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn save_world_to_file(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let world = self.export_world();
+        let json = serde_json::to_string_pretty(&world)?;
+        std::fs::write(path, json)?;
+        log::info!("World saved to {}", path);
+        Ok(())
+    }
+
+    /// Save world to LocalStorage (web)
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_world_to_file(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let world = self.export_world();
+        let json = serde_json::to_string(&world)?;
+        
+        let window = web_sys::window()
+            .ok_or("No window object")?;
+        let storage = window.local_storage()
+            .map_err(|e| format!("Failed to get localStorage: {:?}", e))?
+            .ok_or("localStorage not available")?;
+        
+        storage.set_item(key, &json)
+            .map_err(|e| format!("Failed to save to localStorage: {:?}", e))?;
+        
+        log::info!("World saved to localStorage key: {}", key);
+        Ok(())
+    }
+
+    /// Load world from JSON file (desktop)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_world_from_file(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let json = std::fs::read_to_string(path)?;
+        let world: WorldData = serde_json::from_str(&json)?;
+        self.load_world(world);
+        log::info!("World loaded from {}", path);
+        Ok(())
+    }
+
+    /// Load world from LocalStorage (web)
+    #[cfg(target_arch = "wasm32")]
+    pub fn load_world_from_file(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let window = web_sys::window()
+            .ok_or("No window object")?;
+        let storage = window.local_storage()
+            .map_err(|e| format!("Failed to get localStorage: {:?}", e))?
+            .ok_or("localStorage not available")?;
+        
+        let json = storage.get_item(key)
+            .map_err(|e| format!("Failed to read from localStorage: {:?}", e))?
+            .ok_or_else(|| format!("No saved world found with key: {}", key))?;
+        
+        let world: WorldData = serde_json::from_str(&json)?;
+        self.load_world(world);
+        log::info!("World loaded from localStorage key: {}", key);
         Ok(())
     }
 }

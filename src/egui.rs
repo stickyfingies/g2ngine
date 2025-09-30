@@ -47,7 +47,7 @@ impl EguiRenderer {
         self.state.on_window_event(window, event).consumed
     }
 
-    pub fn draw(
+    pub fn draw<T: Default>(
         &mut self,
         device: &Device,
         queue: &Queue,
@@ -55,11 +55,12 @@ impl EguiRenderer {
         window: &Window,
         window_surface_view: &TextureView,
         screen_descriptor: ScreenDescriptor,
-        mut run_ui: impl FnMut(&Context),
-    ) {
+        mut run_ui: impl FnMut(&Context) -> T,
+    ) -> T {
+        let mut ui_output = T::default();
         let raw_input = self.state.take_egui_input(window);
         let full_output = self.context.run(raw_input, |_ui| {
-            run_ui(&self.context);
+            ui_output = run_ui(&self.context);
         });
 
         self.state
@@ -101,5 +102,7 @@ impl EguiRenderer {
         for x in &full_output.textures_delta.free {
             self.renderer.free_texture(x)
         }
+
+        ui_output
     }
 }
