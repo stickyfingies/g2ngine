@@ -50,6 +50,8 @@ impl Default for CameraData {
 pub struct LightParams {
     pub position: [f32; 3],
     pub color: [f32; 4],
+    #[serde(default = "default_model")]
+    pub model: String,
 }
 
 /// Particle system configuration
@@ -57,9 +59,23 @@ pub struct LightParams {
 #[serde(tag = "type")]
 pub enum ParticleSystemData {
     #[serde(rename = "grid")]
-    Grid { name: String, params: GridParams },
+    Grid {
+        name: String,
+        params: GridParams,
+        #[serde(default = "default_model")]
+        model: String,
+    },
     #[serde(rename = "sphere")]
-    Sphere { name: String, params: SphereParams },
+    Sphere {
+        name: String,
+        params: SphereParams,
+        #[serde(default = "default_model")]
+        model: String,
+    },
+}
+
+fn default_model() -> String {
+    "teapot.obj".to_string()
 }
 
 impl ParticleSystemData {

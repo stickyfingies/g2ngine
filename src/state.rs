@@ -79,6 +79,7 @@ pub struct LightManager {
     lights: [Light; MAX_LIGHTS],
     active_mask: u32,
     dirty: bool,
+    model_path: String,
 }
 
 impl LightManager {
@@ -87,6 +88,7 @@ impl LightManager {
             lights: [Light::default(); MAX_LIGHTS],
             active_mask: 0,
             dirty: false,
+            model_path: "teapot.obj".to_string(),
         }
     }
 
@@ -96,6 +98,14 @@ impl LightManager {
             manager.add_light(*pos, *color);
         }
         manager
+    }
+
+    pub fn model_path(&self) -> &str {
+        &self.model_path
+    }
+
+    pub fn set_model_path(&mut self, path: String) {
+        self.model_path = path;
     }
 
     pub fn add_light(&mut self, pos: [f32; 3], color: [f32; 4]) -> Option<usize> {
@@ -262,7 +272,8 @@ pub struct State {
     depth_texture: GpuTexture,
     window: Arc<Window>,
     clear_color: wgpu::Color,
-    obj_model: model::Model,
+    models: std::collections::HashMap<String, Arc<model::Model>>,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
     #[cfg(not(target_arch = "wasm32"))]
     script_engine: ScriptEngineDesktop,
     #[cfg(target_arch = "wasm32")]
@@ -523,14 +534,20 @@ impl State {
             &device,
             "main".to_string(),
             params,
+            "teapot.obj".to_string(),
             &grid_transform_bind_group_layout,
         );
 
         particle_system_manager.add_grid("main".to_string(), grid_system);
 
-        let obj_model = model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
-            .await
-            .unwrap();
+        // Load initial model into HashMap
+        let mut models = std::collections::HashMap::new();
+        let teapot_model = Arc::new(
+            model::load_model("teapot.obj", &device, &queue, &texture_bind_group_layout)
+                .await
+                .unwrap(),
+        );
+        models.insert("teapot.obj".to_string(), teapot_model);
 
         let egui_renderer = EguiRenderer::new(
             &device,
@@ -570,13 +587,33 @@ impl State {
                 a: 1.0,
             },
             script_engine,
-            obj_model,
+            models,
+            texture_bind_group_layout,
             elapsed_time: 0.0,
         })
     }
 
     pub fn window(&self) -> &Window {
         &self.window
+    }
+
+    /// Get or load a model by path. Returns Arc for cheap cloning.
+    pub async fn get_or_load_model(&mut self, path: &str) -> anyhow::Result<Arc<model::Model>> {
+        if let Some(model) = self.models.get(path) {
+            Ok(Arc::clone(model))
+        } else {
+            let model = Arc::new(
+                model::load_model(
+                    path,
+                    &self.device,
+                    &self.queue,
+                    &self.texture_bind_group_layout,
+                )
+                .await?,
+            );
+            self.models.insert(path.to_string(), Arc::clone(&model));
+            Ok(model)
+        }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -767,38 +804,44 @@ impl State {
 
             // Render lights
             render_pass.set_pipeline(&self.light_render_pipeline);
-            render_pass.draw_light_model_instanced(
-                &self.obj_model,
-                0..self.light_manager.num_lights(),
-                &self.camera_bind_group,
-                &self.light_bind_group,
-            );
+            if let Some(light_model) = self.models.get(self.light_manager.model_path()) {
+                render_pass.draw_light_model_instanced(
+                    light_model,
+                    0..self.light_manager.num_lights(),
+                    &self.camera_bind_group,
+                    &self.light_bind_group,
+                );
+            }
 
             // Render particle systems - batched by type
             render_pass.set_pipeline(&self.render_pipeline);
 
             // Batch 1: All grid systems
             for (_name, grid) in self.particle_system_manager.grids() {
-                render_pass.set_vertex_buffer(1, grid.instance_buffer().slice(..));
-                render_pass.set_bind_group(3, grid.uniform_bind_group(), &[]);
-                render_pass.draw_model_instanced(
-                    &self.obj_model,
-                    0..grid.num_instances(),
-                    &self.camera_bind_group,
-                    &self.light_bind_group,
-                );
+                if let Some(model) = self.models.get(grid.model_path()) {
+                    render_pass.set_vertex_buffer(1, grid.instance_buffer().slice(..));
+                    render_pass.set_bind_group(3, grid.uniform_bind_group(), &[]);
+                    render_pass.draw_model_instanced(
+                        model,
+                        0..grid.num_instances(),
+                        &self.camera_bind_group,
+                        &self.light_bind_group,
+                    );
+                }
             }
 
             // Batch 2: All sphere systems (if any)
             for (_name, sphere) in self.particle_system_manager.spheres() {
-                render_pass.set_vertex_buffer(1, sphere.instance_buffer().slice(..));
-                render_pass.set_bind_group(3, sphere.uniform_bind_group(), &[]);
-                render_pass.draw_model_instanced(
-                    &self.obj_model,
-                    0..sphere.num_instances(),
-                    &self.camera_bind_group,
-                    &self.light_bind_group,
-                );
+                if let Some(model) = self.models.get(sphere.model_path()) {
+                    render_pass.set_vertex_buffer(1, sphere.instance_buffer().slice(..));
+                    render_pass.set_bind_group(3, sphere.uniform_bind_group(), &[]);
+                    render_pass.draw_model_instanced(
+                        model,
+                        0..sphere.num_instances(),
+                        &self.camera_bind_group,
+                        &self.light_bind_group,
+                    );
+                }
             }
         }
 
@@ -875,6 +918,7 @@ impl State {
                 lights.push(LightParams {
                     position: [light.position[0], light.position[1], light.position[2]],
                     color: light.color,
+                    model: self.light_manager.model_path().to_string(),
                 });
             }
         }
@@ -885,12 +929,14 @@ impl State {
             particle_systems.push(ParticleSystemData::Grid {
                 name: name.clone(),
                 params: grid.params().clone(),
+                model: grid.model_path().to_string(),
             });
         }
         for (name, sphere) in self.particle_system_manager.spheres() {
             particle_systems.push(ParticleSystemData::Sphere {
                 name: name.clone(),
                 params: sphere.params().clone(),
+                model: sphere.model_path().to_string(),
             });
         }
 
@@ -938,6 +984,9 @@ impl State {
 
         // Load lights
         self.light_manager = LightManager::new();
+        if let Some(first_light) = data.lights.first() {
+            self.light_manager.set_model_path(first_light.model.clone());
+        }
         for light_data in data.lights {
             self.light_manager
                 .add_light(light_data.position, light_data.color);
@@ -953,20 +1002,30 @@ impl State {
         self.particle_system_manager = ParticleSystemManager::new();
         for ps_data in data.particle_systems {
             match ps_data {
-                ParticleSystemData::Grid { name, params } => {
+                ParticleSystemData::Grid {
+                    name,
+                    params,
+                    model,
+                } => {
                     let grid = GridParticleSystem::new(
                         &self.device,
                         name.clone(),
                         params,
+                        model,
                         &self.particle_uniform_bind_group_layout,
                     );
                     self.particle_system_manager.add_grid(name, grid);
                 }
-                ParticleSystemData::Sphere { name, params } => {
+                ParticleSystemData::Sphere {
+                    name,
+                    params,
+                    model,
+                } => {
                     let sphere = SphereParticleSystem::new(
                         &self.device,
                         name.clone(),
                         params,
+                        model,
                         &self.particle_uniform_bind_group_layout,
                     );
                     self.particle_system_manager.add_sphere(name, sphere);

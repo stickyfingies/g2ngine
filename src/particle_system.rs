@@ -121,6 +121,7 @@ pub trait ParticleSystemType {
 pub struct GridParticleSystem {
     name: String,
     params: GridParams,
+    model_path: String,
     instance_buffer: wgpu::Buffer,
     num_instances: u32,
     uniform_buffer: wgpu::Buffer,
@@ -134,6 +135,7 @@ impl GridParticleSystem {
         device: &wgpu::Device,
         name: String,
         params: GridParams,
+        model_path: String,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let count = params.rows * params.rows;
@@ -168,6 +170,7 @@ impl GridParticleSystem {
         Self {
             name,
             params,
+            model_path,
             instance_buffer,
             num_instances: instances.len() as u32,
             uniform_buffer,
@@ -216,6 +219,10 @@ impl GridParticleSystem {
 
     pub fn params(&self) -> &GridParams {
         &self.params
+    }
+
+    pub fn model_path(&self) -> &str {
+        &self.model_path
     }
 
     pub fn update_params(&mut self, params: GridParams) {
@@ -298,6 +305,7 @@ pub struct SphereTransformUniform {
 pub struct SphereParticleSystem {
     name: String,
     params: SphereParams,
+    model_path: String,
     instance_buffer: wgpu::Buffer,
     num_instances: u32,
     uniform_buffer: wgpu::Buffer,
@@ -311,6 +319,7 @@ impl SphereParticleSystem {
         device: &wgpu::Device,
         name: String,
         params: SphereParams,
+        model_path: String,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let instances = Self::generate_sphere_instances(&params);
@@ -344,6 +353,7 @@ impl SphereParticleSystem {
         Self {
             name,
             params,
+            model_path,
             instance_buffer,
             num_instances: instances.len() as u32,
             uniform_buffer,
@@ -398,6 +408,10 @@ impl SphereParticleSystem {
 
     pub fn params(&self) -> &SphereParams {
         &self.params
+    }
+
+    pub fn model_path(&self) -> &str {
+        &self.model_path
     }
 
     pub fn update_params(&mut self, params: SphereParams) {

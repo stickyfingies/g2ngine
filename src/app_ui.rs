@@ -171,6 +171,7 @@ pub fn app_ui(
                                 device,
                                 name.clone(),
                                 params,
+                                "teapot.obj".to_string(),
                                 particle_uniform_bind_group_layout,
                             );
                             particle_system_manager.add_grid(name, grid);
@@ -187,6 +188,7 @@ pub fn app_ui(
                                 device,
                                 name.clone(),
                                 params,
+                                "teapot.obj".to_string(),
                                 particle_uniform_bind_group_layout,
                             );
                             particle_system_manager.add_sphere(name, sphere);

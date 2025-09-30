@@ -127,42 +127,64 @@ pub async fn load_model(
         })
     }
 
+    // If no materials were loaded, create a default white material
+    if materials.is_empty() {
+        let diffuse_texture_bytes = load_binary("white.png").await?;
+        let diffuse_texture =
+            GpuTexture::from_bytes(device, queue, &diffuse_texture_bytes, "white.png")?;
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("default_material"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+            ],
+        });
+
+        materials.push(Material {
+            name: "default".to_string(),
+            diffuse_texture,
+            bind_group,
+        });
+    }
+
     let meshes = models
         .into_iter()
         .map(|model| {
             let vertices = (0..model.mesh.positions.len() / 3)
                 .map(|i| {
-                    // TODO(seth): refactor
-                    if model.mesh.normals.is_empty() {
-                        ModelVertex {
-                            position: [
-                                model.mesh.positions[i * 3],
-                                model.mesh.positions[i * 3 + 1],
-                                model.mesh.positions[i * 3 + 2],
-                            ],
-                            tex_coords: [
-                                model.mesh.texcoords[i * 2],
-                                1.0 - model.mesh.texcoords[i * 2 + 1],
-                            ],
-                            normal: [0.0, 0.0, 0.0],
-                        }
+                    let normal = if model.mesh.normals.is_empty() {
+                        [0.0, 0.0, 0.0]
                     } else {
-                        ModelVertex {
-                            position: [
-                                model.mesh.positions[i * 3],
-                                model.mesh.positions[i * 3 + 1],
-                                model.mesh.positions[i * 3 + 2],
-                            ],
-                            tex_coords: [
-                                model.mesh.texcoords[i * 2],
-                                1.0 - model.mesh.texcoords[i * 2 + 1],
-                            ],
-                            normal: [
-                                model.mesh.normals[i * 3],
-                                model.mesh.normals[i * 3 + 1],
-                                model.mesh.normals[i * 3 + 2],
-                            ],
-                        }
+                        [
+                            model.mesh.normals[i * 3],
+                            model.mesh.normals[i * 3 + 1],
+                            model.mesh.normals[i * 3 + 2],
+                        ]
+                    };
+                    let tex_coords = if model.mesh.texcoords.is_empty() {
+                        [0.0, 0.0]
+                    } else {
+                        [
+                            model.mesh.texcoords[i * 2],
+                            1.0 - model.mesh.texcoords[i * 2 + 1],
+                        ]
+                    };
+                    ModelVertex {
+                        position: [
+                            model.mesh.positions[i * 3],
+                            model.mesh.positions[i * 3 + 1],
+                            model.mesh.positions[i * 3 + 2],
+                        ],
+                        tex_coords,
+                        normal,
                     }
                 })
                 .collect::<Vec<_>>();
