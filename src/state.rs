@@ -1,7 +1,8 @@
-use crate::app_ui::UIState;
 use crate::egui::EguiRenderer;
 use crate::model::{self, DrawLight, ModelVertex, Vertex};
-use crate::particle_system::{InstanceRaw, ParticleSystem, ParticleSystemDesc};
+use crate::particle_system::{
+    GridParticleSystem, InstanceRaw, ParticleSystemDesc, ParticleSystemManager,
+};
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
 use crate::{camera, resources};
@@ -254,7 +255,8 @@ pub struct State {
     light_manager: LightManager,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
-    particle_system: ParticleSystem,
+    particle_system_manager: ParticleSystemManager,
+    particle_uniform_bind_group_layout: wgpu::BindGroupLayout,
     depth_texture: GpuTexture,
     window: Arc<Window>,
     clear_color: wgpu::Color,
@@ -263,7 +265,6 @@ pub struct State {
     script_engine: ScriptEngineDesktop,
     #[cfg(target_arch = "wasm32")]
     script_engine: ScriptEngineWeb,
-    ui_state: UIState,
     elapsed_time: f32,
 }
 
@@ -508,12 +509,22 @@ impl State {
             .call_js("makeParticleSystem".into(), &())
             .unwrap();
 
-        let particle_system = ParticleSystem::new(
+        // NEW: Create particle system manager and add initial system
+        let mut particle_system_manager = ParticleSystemManager::new();
+
+        // Extract params from JS and create new-style grid system
+        let params = match system_desc {
+            ParticleSystemDesc::Grid { params, .. } => params,
+        };
+
+        let grid_system = GridParticleSystem::new(
             &device,
             "main".to_string(),
-            system_desc,
+            params,
             &grid_transform_bind_group_layout,
         );
+
+        particle_system_manager.add_grid("main".to_string(), grid_system);
 
         let obj_model = model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
             .await
@@ -545,7 +556,8 @@ impl State {
             light_manager,
             light_buffer,
             light_bind_group,
-            particle_system,
+            particle_system_manager,
+            particle_uniform_bind_group_layout: grid_transform_bind_group_layout,
             depth_texture,
             window,
             mouse_pressed: false,
@@ -557,7 +569,6 @@ impl State {
             },
             script_engine,
             obj_model,
-            ui_state: UIState::default(),
             elapsed_time: 0.0,
         })
     }
@@ -698,6 +709,19 @@ impl State {
             return Ok(());
         }
 
+        // Rebuild particle systems if needed (before render pass)
+        use crate::particle_system::ParticleSystemType;
+        for (_name, grid) in self.particle_system_manager.grids_mut() {
+            if grid.needs_rebuild() {
+                grid.rebuild(&self.device);
+            }
+        }
+        for (_name, sphere) in self.particle_system_manager.spheres_mut() {
+            if sphere.needs_rebuild() {
+                sphere.rebuild(&self.device);
+            }
+        }
+
         let output = self.surface.get_current_texture()?;
         if output.suboptimal {
             return Err(wgpu::SurfaceError::Outdated);
@@ -736,11 +760,10 @@ impl State {
                 timestamp_writes: None,
             });
 
+            use crate::particle_system::ParticleSystemType;
             use model::DrawModel;
 
-            let render_data = &self.particle_system.render;
-            render_pass.set_vertex_buffer(1, render_data.instance_buffer.slice(..));
-
+            // Render lights
             render_pass.set_pipeline(&self.light_render_pipeline);
             render_pass.draw_light_model_instanced(
                 &self.obj_model,
@@ -749,14 +772,32 @@ impl State {
                 &self.light_bind_group,
             );
 
+            // Render particle systems - batched by type
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(3, &render_data.grid_transform_bind_group, &[]);
-            render_pass.draw_model_instanced(
-                &self.obj_model,
-                0..render_data.num_instances,
-                &self.camera_bind_group,
-                &self.light_bind_group,
-            );
+
+            // Batch 1: All grid systems
+            for (_name, grid) in self.particle_system_manager.grids() {
+                render_pass.set_vertex_buffer(1, grid.instance_buffer().slice(..));
+                render_pass.set_bind_group(3, grid.uniform_bind_group(), &[]);
+                render_pass.draw_model_instanced(
+                    &self.obj_model,
+                    0..grid.num_instances(),
+                    &self.camera_bind_group,
+                    &self.light_bind_group,
+                );
+            }
+
+            // Batch 2: All sphere systems (if any)
+            for (_name, sphere) in self.particle_system_manager.spheres() {
+                render_pass.set_vertex_buffer(1, sphere.instance_buffer().slice(..));
+                render_pass.set_bind_group(3, sphere.uniform_bind_group(), &[]);
+                render_pass.draw_model_instanced(
+                    &self.obj_model,
+                    0..sphere.num_instances(),
+                    &self.camera_bind_group,
+                    &self.light_bind_group,
+                );
+            }
         }
 
         let screen_descriptor = ScreenDescriptor {
@@ -764,9 +805,8 @@ impl State {
             pixels_per_point: self.window().scale_factor() as f32,
         };
 
-        let ui_state = &mut self.ui_state;
         let clear_color = &mut self.clear_color;
-        let particle_system = &mut self.particle_system;
+        let particle_system_manager = &mut self.particle_system_manager;
         let light_manager = &mut self.light_manager;
         let light_buffer = &self.light_buffer;
         let queue = &self.queue;
@@ -780,19 +820,17 @@ impl State {
             |ctx| {
                 crate::app_ui::app_ui(
                     ctx,
-                    ui_state,
                     clear_color,
-                    particle_system,
+                    particle_system_manager,
                     light_manager,
                     light_buffer,
                     dt.as_millis() as f32,
                     queue,
+                    &self.device,
+                    &self.particle_uniform_bind_group_layout,
                 );
             },
         );
-
-        // Update particle system if needed (after UI has marked it dirty)
-        self.particle_system.update_if_ready(&self.device);
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
