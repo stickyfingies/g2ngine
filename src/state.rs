@@ -323,6 +323,21 @@ impl State {
             }],
         });
 
+        let grid_transform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("grid_transform_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         let shader_source = resources::load_string("shader.wgsl").await.unwrap();
         let shader = wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -336,6 +351,7 @@ impl State {
                     &texture_bind_group_layout,
                     &camera_bind_group_layout,
                     &light_bind_group_layout,
+                    &grid_transform_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -375,7 +391,12 @@ impl State {
             .call_js("makeParticleSystem".into(), &())
             .unwrap();
 
-        let particle_system = ParticleSystem::new(&device, "main".to_string(), system_desc);
+        let particle_system = ParticleSystem::new(
+            &device,
+            "main".to_string(),
+            system_desc,
+            &grid_transform_bind_group_layout,
+        );
 
         let obj_model = model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
             .await
@@ -599,7 +620,8 @@ impl State {
 
             use model::DrawModel;
 
-            render_pass.set_vertex_buffer(1, self.particle_system.instance_buffer.slice(..));
+            let render_data = &self.particle_system.render;
+            render_pass.set_vertex_buffer(1, render_data.instance_buffer.slice(..));
 
             render_pass.set_pipeline(&self.light_render_pipeline);
             render_pass.draw_light_model_instanced(
@@ -610,9 +632,10 @@ impl State {
             );
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(3, &render_data.grid_transform_bind_group, &[]);
             render_pass.draw_model_instanced(
                 &self.obj_model,
-                0..self.particle_system.num_instances as u32,
+                0..render_data.num_instances,
                 &self.camera_bind_group,
                 &self.light_bind_group,
             );
@@ -626,6 +649,7 @@ impl State {
         let ui_state = &mut self.ui_state;
         let clear_color = &mut self.clear_color;
         let particle_system = &mut self.particle_system;
+        let queue = &self.queue;
         self.egui_renderer.draw(
             &self.device,
             &self.queue,
@@ -640,6 +664,7 @@ impl State {
                     clear_color,
                     particle_system,
                     dt.as_millis() as f32,
+                    queue,
                 );
             },
         );

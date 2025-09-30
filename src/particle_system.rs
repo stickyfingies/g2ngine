@@ -67,6 +67,15 @@ pub struct GridParams {
     pub center: [f32; 3],
 }
 
+// GPU uniform for grid transform (spacing + center)
+// Organized to minimize padding: vec3 + f32 = 16 bytes (single vec4)
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GridTransformUniform {
+    pub center: [f32; 3],
+    pub spacing: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ParticleSystemDesc {
@@ -74,19 +83,36 @@ pub enum ParticleSystemDesc {
     Grid { count: usize, params: GridParams },
 }
 
-pub struct ParticleSystem {
+// HOT DATA: Accessed every frame during rendering
+pub struct ParticleRenderData {
+    pub instance_buffer: wgpu::Buffer,
+    pub num_instances: u32,
+    pub grid_transform_buffer: wgpu::Buffer,
+    pub grid_transform_bind_group: wgpu::BindGroup,
+}
+
+// COLD DATA: Only accessed during rebuild operations
+pub struct ParticleSystemConfig {
     pub name: String,
     pub desc: ParticleSystemDesc,
-    pub instance_buffer: wgpu::Buffer,
-    pub num_instances: usize,
     needs_rebuild: bool,
     last_edit_time: web_time::Instant,
+}
+
+pub struct ParticleSystem {
+    pub render: ParticleRenderData,
+    pub config: ParticleSystemConfig,
 }
 
 const DEBOUNCE_MS: u64 = 20;
 
 impl ParticleSystem {
-    pub fn new(device: &wgpu::Device, name: String, desc: ParticleSystemDesc) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        name: String,
+        desc: ParticleSystemDesc,
+        grid_transform_bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let instances = Self::generate_instances(&desc);
         let num_instances = instances.len();
 
@@ -96,13 +122,45 @@ impl ParticleSystem {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        // Create grid transform uniform buffer
+        let grid_transform = match &desc {
+            ParticleSystemDesc::Grid { params, .. } => GridTransformUniform {
+                center: params.center,
+                spacing: params.spacing,
+            },
+        };
+
+        let grid_transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("Particle System '{}' Grid Transform Buffer", name)),
+            contents: bytemuck::cast_slice(&[grid_transform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let grid_transform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!(
+                "Particle System '{}' Grid Transform Bind Group",
+                name
+            )),
+            layout: grid_transform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: grid_transform_buffer.as_entire_binding(),
+            }],
+        });
+
         Self {
-            name,
-            desc,
-            instance_buffer,
-            num_instances,
-            needs_rebuild: false,
-            last_edit_time: web_time::Instant::now(),
+            render: ParticleRenderData {
+                instance_buffer,
+                num_instances: num_instances as u32,
+                grid_transform_buffer,
+                grid_transform_bind_group,
+            },
+            config: ParticleSystemConfig {
+                name,
+                desc,
+                needs_rebuild: false,
+                last_edit_time: web_time::Instant::now(),
+            },
         }
     }
 
@@ -116,17 +174,16 @@ impl ParticleSystem {
 
     fn generate_grid_instances(count: usize, params: &GridParams) -> Vec<InstanceRaw> {
         let rows = params.rows;
-        let spacing = params.spacing;
-        let center = Vector3::new(params.center[0], params.center[1], params.center[2]);
 
+        // Generate instances at UNIT spacing - shader will apply spacing/center transform
         let displacement = Vector3::new(rows as f32 * 0.5, 0.0, rows as f32 * 0.5);
 
         let mut instances = Vec::with_capacity(count);
 
         for x in 0..rows {
             for z in 0..rows {
-                let position =
-                    (Vector3::new(x as f32, 0.0, z as f32) - displacement) * spacing + center;
+                // Unit-spaced position (will be scaled by shader)
+                let position = Vector3::new(x as f32, 0.0, z as f32) - displacement;
 
                 let rotation = if position.magnitude2() < 0.001 {
                     Quaternion::new(1.0, 0.0, 0.0, 0.0)
@@ -157,25 +214,30 @@ impl ParticleSystem {
     }
 
     pub fn mark_dirty(&mut self) {
-        self.needs_rebuild = true;
-        self.last_edit_time = web_time::Instant::now();
+        self.config.needs_rebuild = true;
+        self.config.last_edit_time = web_time::Instant::now();
     }
 
     pub fn should_rebuild(&self) -> bool {
-        self.needs_rebuild && self.last_edit_time.elapsed().as_millis() >= DEBOUNCE_MS as u128
+        self.config.needs_rebuild
+            && self.config.last_edit_time.elapsed().as_millis() >= DEBOUNCE_MS as u128
     }
 
     pub fn rebuild(&mut self, device: &wgpu::Device) {
-        let instances = Self::generate_instances(&self.desc);
-        self.num_instances = instances.len();
+        let instances = Self::generate_instances(&self.config.desc);
+        self.render.num_instances = instances.len() as u32;
 
-        self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Particle System '{}' Instance Buffer", self.name)),
-            contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        self.render.instance_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!(
+                    "Particle System '{}' Instance Buffer",
+                    self.config.name
+                )),
+                contents: bytemuck::cast_slice(&instances),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
-        self.needs_rebuild = false;
+        self.config.needs_rebuild = false;
     }
 
     pub fn update_if_ready(&mut self, device: &wgpu::Device) {

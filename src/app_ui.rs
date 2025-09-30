@@ -1,4 +1,4 @@
-use crate::particle_system::{ParticleSystem, ParticleSystemDesc};
+use crate::particle_system::{GridTransformUniform, ParticleSystem, ParticleSystemDesc};
 use egui::{Align2, Context};
 
 #[derive(Default)]
@@ -13,6 +13,7 @@ pub fn app_ui(
     clear_color: &mut wgpu::Color,
     particle_system: &mut ParticleSystem,
     delta_time_ms: f32,
+    queue: &wgpu::Queue,
 ) {
     egui::Window::new("Demo GUI")
         .default_open(true)
@@ -65,19 +66,23 @@ pub fn app_ui(
 
             // Particle System info
             ui.collapsing("Particle System", |ui| {
-                ui.label(format!("Name: {}", particle_system.name));
-                ui.label(format!("Instance Count: {}", particle_system.num_instances));
+                ui.label(format!("Name: {}", particle_system.config.name));
+                ui.label(format!(
+                    "Instance Count: {}",
+                    particle_system.render.num_instances
+                ));
 
-                let mut needs_dirty = false;
+                let mut needs_buffer_rebuild = false;
+                let mut needs_uniform_update = false;
 
-                match &mut particle_system.desc {
+                match &mut particle_system.config.desc {
                     ParticleSystemDesc::Grid { count, params } => {
                         ui.label(format!("Type: Grid"));
 
                         ui.separator();
                         ui.label("Parameters:");
 
-                        // Editable rows slider
+                        // Editable rows slider - triggers buffer rebuild
                         ui.horizontal(|ui| {
                             ui.label("Rows:");
                             if ui
@@ -86,39 +91,52 @@ pub fn app_ui(
                             {
                                 // Update count based on rows
                                 *count = params.rows * params.rows;
-                                needs_dirty = true;
+                                needs_buffer_rebuild = true;
                             }
                         });
 
-                        // Editable spacing slider
+                        // Editable spacing slider - updates uniform immediately
                         ui.horizontal(|ui| {
                             ui.label("Spacing:");
                             if ui
                                 .add(egui::Slider::new(&mut params.spacing, 0.5..=10.0))
                                 .changed()
                             {
-                                needs_dirty = true;
+                                needs_uniform_update = true;
                             }
                         });
 
-                        // Editable center sliders
+                        // Editable center sliders - update uniform immediately
                         ui.label("Center:");
-                        needs_dirty |= ui
+                        needs_uniform_update |= ui
                             .add(egui::Slider::new(&mut params.center[0], -50.0..=50.0).text("X"))
                             .changed();
-                        needs_dirty |= ui
+                        needs_uniform_update |= ui
                             .add(egui::Slider::new(&mut params.center[1], -50.0..=50.0).text("Y"))
                             .changed();
-                        needs_dirty |= ui
+                        needs_uniform_update |= ui
                             .add(egui::Slider::new(&mut params.center[2], -50.0..=50.0).text("Z"))
                             .changed();
 
                         ui.separator();
                         ui.label(format!("Target Count: {}", count));
+
+                        // Update GPU uniform immediately for spacing/center changes
+                        if needs_uniform_update {
+                            let uniform = GridTransformUniform {
+                                center: params.center,
+                                spacing: params.spacing,
+                            };
+                            queue.write_buffer(
+                                &particle_system.render.grid_transform_buffer,
+                                0,
+                                bytemuck::cast_slice(&[uniform]),
+                            );
+                        }
                     }
                 }
 
-                if needs_dirty {
+                if needs_buffer_rebuild {
                     particle_system.mark_dirty();
                 }
             });
