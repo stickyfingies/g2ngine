@@ -245,4 +245,17 @@ impl ParticleSystem {
             self.rebuild(device);
         }
     }
+
+    pub fn update_grid_uniform(&self, queue: &wgpu::Queue) {
+        let ParticleSystemDesc::Grid { params, .. } = &self.config.desc;
+        let uniform = GridTransformUniform {
+            center: params.center,
+            spacing: params.spacing,
+        };
+        queue.write_buffer(
+            &self.render.grid_transform_buffer,
+            0,
+            bytemuck::cast_slice(&[uniform]),
+        );
+    }
 }

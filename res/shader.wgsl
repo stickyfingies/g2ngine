@@ -8,11 +8,19 @@ struct CameraUniform {
 var<uniform> camera: CameraUniform;
 
 struct Light {
-    position: vec3<f32>,
-    color: vec3<f32>,
+    position: vec4<f32>,
+    color: vec4<f32>,
 }
+
+const MAX_LIGHTS: u32 = 10u;
+
+struct LightData {
+    lights: array<Light, MAX_LIGHTS>,
+    num_lights: u32,
+}
+
 @group(2) @binding(0)
-var<uniform> light: Light;
+var<uniform> light_data: LightData;
 
 struct GridTransform {
     center: vec3<f32>,
@@ -91,20 +99,32 @@ var s_diffuse: sampler;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-
-    let light_dir = normalize(light.position - in.world_position);
     let view_dir = normalize(camera.view_pos.xyz - in.world_position);
-    let half_dir = normalize(view_dir + light_dir);
 
-    let ambient_strength = 0.1;
-    let ambient_color = light.color * ambient_strength;
+    var total_light = vec3<f32>(0.0, 0.0, 0.0);
 
-    let diffuse_strength = max(dot(in.world_normal, light_dir), 0.0);
-    let diffuse_color = light.color * diffuse_strength;
+    for (var i = 0u; i < light_data.num_lights; i = i + 1u) {
+        let light = light_data.lights[i];
+        let light_to_frag = light.position.xyz - in.world_position;
+        let dist_sq = dot(light_to_frag, light_to_frag);
+        let attenuation = 1.0 / (1.0 + 0.1 * dist_sq); // Simple inverse square attenuation
 
-    let specular_strength = pow(max(dot(view_dir, half_dir), 0.0), 32.0);
-    let specular_color = specular_strength * light.color;
+        let light_dir = normalize(light_to_frag);
+        let half_dir = normalize(view_dir + light_dir);
 
-    let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;
+        let ambient_strength = 0.1;
+        let ambient_color = light.color.xyz * ambient_strength;
+
+        let diffuse_strength = max(dot(in.world_normal, light_dir), 0.0);
+        let diffuse_color = light.color.xyz * diffuse_strength;
+
+        let specular_strength = pow(max(dot(in.world_normal, half_dir), 0.0), 32.0);
+        let specular_color = specular_strength * light.color.xyz;
+
+        // Apply attenuation to diffuse and specular components
+        total_light = total_light + ambient_color + (diffuse_color + specular_color) * attenuation;
+    }
+
+    let result = total_light * object_color.xyz;
     return vec4<f32>(result, object_color.a);
 }

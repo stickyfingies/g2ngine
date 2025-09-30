@@ -6,11 +6,19 @@ struct Camera {
 var<uniform> camera: Camera;
 
 struct Light {
-    position: vec3<f32>,
-    color: vec3<f32>,
-};
+    position: vec4<f32>,
+    color: vec4<f32>,
+}
+
+const MAX_LIGHTS: u32 = 10u;
+
+struct LightData {
+    lights: array<Light, MAX_LIGHTS>,
+    num_lights: u32,
+}
+
 @group(1) @binding(0)
-var<uniform> light: Light;
+var<uniform> light_data: LightData;
 
 //
 
@@ -24,11 +32,12 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(model: VertexInput) -> VertexOutput {
+fn vs_main(model: VertexInput, @builtin(instance_index) instance_index: u32) -> VertexOutput {
     let scale = 0.25;
+    let light = light_data.lights[instance_index];
     var out: VertexOutput;
-    out.clip_position = camera.view_proj * vec4<f32>(model.position * scale + light.position, 1.0);
-    out.color = light.color;
+    out.clip_position = camera.view_proj * vec4<f32>(model.position * scale + light.position.xyz, 1.0);
+    out.color = light.color.xyz;
     return out;
 }
 

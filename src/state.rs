@@ -5,8 +5,7 @@ use crate::particle_system::{InstanceRaw, ParticleSystem, ParticleSystemDesc};
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
 use crate::{camera, resources};
-use cgmath::prelude::*;
-use cgmath::{Matrix4, Quaternion, Vector3};
+use cgmath::Matrix4;
 use egui_wgpu::ScreenDescriptor;
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
@@ -49,11 +48,128 @@ impl CameraUniform {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct LightUniform {
-    position: [f32; 3],
-    _padding: u32,
-    color: [f32; 3],
-    _padding2: u32,
+pub struct Light {
+    pub position: [f32; 4],
+    pub color: [f32; 4],
+}
+
+const MAX_LIGHTS: usize = 10;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LightData {
+    lights: [Light; MAX_LIGHTS],
+    num_lights: u32,
+    _padding: [u32; 3],
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        Self {
+            position: [0.0; 4],
+            color: [0.0; 4],
+        }
+    }
+}
+
+pub struct LightManager {
+    lights: [Light; MAX_LIGHTS],
+    active_mask: u32,
+    dirty: bool,
+}
+
+impl LightManager {
+    pub fn new() -> Self {
+        Self {
+            lights: [Light::default(); MAX_LIGHTS],
+            active_mask: 0,
+            dirty: false,
+        }
+    }
+
+    pub fn with_lights(lights: &[([f32; 3], [f32; 4])]) -> Self {
+        let mut manager = Self::new();
+        for (pos, color) in lights {
+            manager.add_light(*pos, *color);
+        }
+        manager
+    }
+
+    pub fn add_light(&mut self, pos: [f32; 3], color: [f32; 4]) -> Option<usize> {
+        for i in 0..MAX_LIGHTS {
+            if self.active_mask & (1 << i) == 0 {
+                self.lights[i] = Light {
+                    position: [pos[0], pos[1], pos[2], 1.0],
+                    color,
+                };
+                self.active_mask |= 1 << i;
+                self.dirty = true;
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    pub fn remove_light(&mut self, index: usize) {
+        if index < MAX_LIGHTS {
+            self.active_mask &= !(1 << index);
+            self.dirty = true;
+        }
+    }
+
+    pub fn update_light(&mut self, index: usize, pos: [f32; 3], color: [f32; 4]) {
+        if self.is_active(index) {
+            self.lights[index].position = [pos[0], pos[1], pos[2], 1.0];
+            self.lights[index].color = color;
+            self.dirty = true;
+        }
+    }
+
+    pub fn get_light(&self, index: usize) -> Option<&Light> {
+        if self.is_active(index) {
+            Some(&self.lights[index])
+        } else {
+            None
+        }
+    }
+
+    pub fn sync_to_gpu(&self) -> LightData {
+        let mut gpu_lights = [Light::default(); MAX_LIGHTS];
+        let mut write_idx = 0;
+
+        for i in 0..MAX_LIGHTS {
+            if self.is_active(i) {
+                gpu_lights[write_idx] = self.lights[i];
+                write_idx += 1;
+            }
+        }
+
+        LightData {
+            lights: gpu_lights,
+            num_lights: write_idx as u32,
+            _padding: [0; 3],
+        }
+    }
+
+    pub fn is_active(&self, index: usize) -> bool {
+        index < MAX_LIGHTS && (self.active_mask & (1 << index)) != 0
+    }
+
+    pub fn num_lights(&self) -> u32 {
+        self.active_mask.count_ones()
+    }
+
+    pub fn max_lights(&self) -> usize {
+        MAX_LIGHTS
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
 }
 
 fn create_render_pipeline(
@@ -135,7 +251,7 @@ pub struct State {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    light_uniform: LightUniform,
+    light_manager: LightManager,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
     particle_system: ParticleSystem,
@@ -148,6 +264,7 @@ pub struct State {
     #[cfg(target_arch = "wasm32")]
     script_engine: ScriptEngineWeb,
     ui_state: UIState,
+    elapsed_time: f32,
 }
 
 impl State {
@@ -286,16 +403,16 @@ impl State {
             label: Some("camera_bind_group"),
         });
 
-        let light_uniform = LightUniform {
-            position: [2.0, 2.0, 2.0],
-            _padding: 0,
-            color: [1.0, 1.0, 1.0],
-            _padding2: 0,
-        };
+        // Initialize light manager with default lights
+        let light_manager = LightManager::with_lights(&[
+            ([2.0, 2.0, 2.0], [1.0, 1.0, 1.0, 1.0]),
+            ([-2.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]),
+        ]);
 
+        let lights = light_manager.sync_to_gpu();
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("light_buffer"),
-            contents: bytemuck::cast_slice(&[light_uniform]),
+            contents: bytemuck::cast_slice(&[lights]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -425,7 +542,7 @@ impl State {
             camera_buffer,
             camera_bind_group,
             camera_uniform,
-            light_uniform,
+            light_manager,
             light_buffer,
             light_bind_group,
             particle_system,
@@ -441,6 +558,7 @@ impl State {
             script_engine,
             obj_model,
             ui_state: UIState::default(),
+            elapsed_time: 0.0,
         })
     }
 
@@ -504,6 +622,9 @@ impl State {
     }
 
     pub fn update(&mut self, dt: web_time::Duration) {
+        let dt_secs = dt.as_secs_f32();
+        self.elapsed_time += dt_secs;
+
         // Update the camera
         self.camera_controller.update_camera(&mut self.camera, dt);
         self.camera_uniform
@@ -514,21 +635,18 @@ impl State {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
 
-        // Update the light
-        let old_position: Vector3<_> = self.light_uniform.position.into();
-        self.light_uniform.position =
-            (Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(1.0)) * old_position)
-                .into();
-        self.queue.write_buffer(
-            &self.light_buffer,
-            0,
-            bytemuck::cast_slice(&[self.light_uniform]),
-        );
+        // Sync light manager to GPU only if dirty
+        if self.light_manager.is_dirty() {
+            let lights = self.light_manager.sync_to_gpu();
+            self.queue
+                .write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[lights]));
+            self.light_manager.clear_dirty();
+        }
 
         // Call JS update function every frame and capture clear color
         match self.script_engine.call_js("update".into(), &()) {
-            Ok(color) => {
-                let color: [f32; 4] = color;
+            Ok(_color) => {
+                let _color: [f32; 4] = _color;
                 // self.set_clear_color(color);
             }
             Err(e) => {
@@ -626,7 +744,7 @@ impl State {
             render_pass.set_pipeline(&self.light_render_pipeline);
             render_pass.draw_light_model_instanced(
                 &self.obj_model,
-                0..1,
+                0..self.light_manager.num_lights(),
                 &self.camera_bind_group,
                 &self.light_bind_group,
             );
@@ -649,6 +767,8 @@ impl State {
         let ui_state = &mut self.ui_state;
         let clear_color = &mut self.clear_color;
         let particle_system = &mut self.particle_system;
+        let light_manager = &mut self.light_manager;
+        let light_buffer = &self.light_buffer;
         let queue = &self.queue;
         self.egui_renderer.draw(
             &self.device,
@@ -663,6 +783,8 @@ impl State {
                     ui_state,
                     clear_color,
                     particle_system,
+                    light_manager,
+                    light_buffer,
                     dt.as_millis() as f32,
                     queue,
                 );
