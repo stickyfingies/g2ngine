@@ -1,15 +1,16 @@
+mod app_ui;
 mod camera;
+mod egui;
 #[cfg(not(target_arch = "wasm32"))]
 mod engine_desktop;
 #[cfg(target_arch = "wasm32")]
 mod engine_web;
-mod gui;
 mod model;
+mod particle_system;
 mod resources;
 mod scripting;
 mod state;
 mod texture;
-mod ui;
 
 use crate::state::State;
 use std::sync::Arc;

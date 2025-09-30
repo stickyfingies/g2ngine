@@ -2,6 +2,18 @@ const { vec3, quat, mat4 } = glMatrix;
 
 // Init system
 
+function makeParticleSystem() {
+  return {
+    type: "grid",
+    count: 900,
+    params: {
+      rows: 30,
+      spacing: 3.0,
+      center: [0.0, 0.0, 0.0],
+    },
+  };
+}
+
 function makeInstances() {
   const SPACE_BETWEEN = 3;
   const NUM_INSTANCES_PER_ROW = 30;

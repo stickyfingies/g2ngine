@@ -1,10 +1,11 @@
-use crate::gui::EguiRenderer;
+use crate::app_ui::UIState;
+use crate::egui::EguiRenderer;
 use crate::model::{self, DrawLight, ModelVertex, Vertex};
+use crate::particle_system::{InstanceRaw, ParticleSystem, ParticleSystemDesc};
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
-use crate::ui::UIState;
 use crate::{camera, resources};
-use cgmath::{Matrix3, prelude::*};
+use cgmath::prelude::*;
 use cgmath::{Matrix4, Quaternion, Vector3};
 use egui_wgpu::ScreenDescriptor;
 use std::{iter, sync::Arc};
@@ -23,65 +24,6 @@ use crate::engine_web::ScriptEngineWeb;
 type ScriptEnginePlatform = ScriptEngineDesktop;
 #[cfg(target_arch = "wasm32")]
 type ScriptEnginePlatform = ScriptEngineWeb;
-
-/** Holds the model matrix of a transform. */
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct InstanceRaw {
-    model: [[f32; 4]; 4],
-    normal: [[f32; 3]; 3],
-}
-
-impl InstanceRaw {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use wgpu::{
-            BufferAddress, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode,
-        };
-
-        VertexBufferLayout {
-            array_stride: std::mem::size_of::<InstanceRaw>() as BufferAddress,
-            step_mode: VertexStepMode::Instance,
-            attributes: &[
-                VertexAttribute {
-                    offset: 0,
-                    shader_location: 5,
-                    format: VertexFormat::Float32x4,
-                },
-                VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as BufferAddress,
-                    shader_location: 6,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as BufferAddress,
-                    shader_location: 7,
-                    format: VertexFormat::Float32x4,
-                },
-                VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 12]>() as BufferAddress,
-                    shader_location: 8,
-                    format: VertexFormat::Float32x4,
-                },
-                // Normal matrix
-                VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 16]>() as BufferAddress,
-                    shader_location: 9,
-                    format: VertexFormat::Float32x3,
-                },
-                VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 19]>() as BufferAddress,
-                    shader_location: 10,
-                    format: VertexFormat::Float32x3,
-                },
-                VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 22]>() as BufferAddress,
-                    shader_location: 11,
-                    format: VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -196,8 +138,7 @@ pub struct State {
     light_uniform: LightUniform,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
-    num_instances: usize,
-    instance_buffer: wgpu::Buffer,
+    particle_system: ParticleSystem,
     depth_texture: GpuTexture,
     window: Arc<Window>,
     clear_color: wgpu::Color,
@@ -429,58 +370,12 @@ impl State {
             )
         };
 
-        // Get position+rotation data from JS script using optimized Float32Array transfer
-        let pos_rot_data: Vec<f32> = script_engine
-            .call_js_float32array("makeInstances".into(), &())
+        // Get particle system parameters from JS and create the system in Rust
+        let system_desc: ParticleSystemDesc = script_engine
+            .call_js("makeParticleSystem".into(), &())
             .unwrap();
 
-        // Parse interleaved data: [pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w, ...]
-        // 7 floats per instance
-        let num_instances = pos_rot_data.len() / 7;
-        let mut instance_matrices = Vec::with_capacity(num_instances * 28);
-
-        for i in 0..num_instances {
-            let base_idx = i * 7;
-
-            // Extract position and rotation
-            let position = Vector3::new(
-                pos_rot_data[base_idx + 0],
-                pos_rot_data[base_idx + 1],
-                pos_rot_data[base_idx + 2],
-            );
-            let rotation = Quaternion::new(
-                pos_rot_data[base_idx + 6], // w component first in cgmath
-                pos_rot_data[base_idx + 3], // x
-                pos_rot_data[base_idx + 4], // y
-                pos_rot_data[base_idx + 5], // z
-            );
-
-            // Compute 4x4 transformation matrix in Rust (fast!)
-            let matrix = Matrix4::from_translation(position) * Matrix4::from(rotation);
-            let normal_matrix = Matrix3::from(rotation);
-
-            // Convert to column-major array for GPU
-            let matrix_array: [[f32; 4]; 4] = matrix.into();
-            let normal_matrix_array: [[f32; 3]; 3] = normal_matrix.into();
-
-            // Flatten into the instance buffer
-            for col in &matrix_array {
-                for &elem in col {
-                    instance_matrices.push(elem);
-                }
-            }
-            for col in &normal_matrix_array {
-                for &elem in col {
-                    instance_matrices.push(elem);
-                }
-            }
-        }
-
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_matrices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let particle_system = ParticleSystem::new(&device, "main".to_string(), system_desc);
 
         let obj_model = model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
             .await
@@ -512,8 +407,7 @@ impl State {
             light_uniform,
             light_buffer,
             light_bind_group,
-            num_instances,
-            instance_buffer,
+            particle_system,
             depth_texture,
             window,
             mouse_pressed: false,
@@ -614,7 +508,7 @@ impl State {
         match self.script_engine.call_js("update".into(), &()) {
             Ok(color) => {
                 let color: [f32; 4] = color;
-                self.set_clear_color(color);
+                // self.set_clear_color(color);
             }
             Err(e) => {
                 log::warn!("{}", e);
@@ -705,7 +599,7 @@ impl State {
 
             use model::DrawModel;
 
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.particle_system.instance_buffer.slice(..));
 
             render_pass.set_pipeline(&self.light_render_pipeline);
             render_pass.draw_light_model_instanced(
@@ -718,7 +612,7 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.draw_model_instanced(
                 &self.obj_model,
-                0..self.num_instances as u32,
+                0..self.particle_system.num_instances as u32,
                 &self.camera_bind_group,
                 &self.light_bind_group,
             );
@@ -730,6 +624,8 @@ impl State {
         };
 
         let ui_state = &mut self.ui_state;
+        let clear_color = &mut self.clear_color;
+        let particle_system = &mut self.particle_system;
         self.egui_renderer.draw(
             &self.device,
             &self.queue,
@@ -738,9 +634,18 @@ impl State {
             &view,
             screen_descriptor,
             |ctx| {
-                crate::ui::demo_ui(ctx, ui_state, dt.as_millis() as f32);
+                crate::app_ui::app_ui(
+                    ctx,
+                    ui_state,
+                    clear_color,
+                    particle_system,
+                    dt.as_millis() as f32,
+                );
             },
         );
+
+        // Update particle system if needed (after UI has marked it dirty)
+        self.particle_system.update_if_ready(&self.device);
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
