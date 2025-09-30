@@ -6,7 +6,7 @@ use crate::particle_system::{
 };
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
-use crate::world::{CameraData, LightData as WorldLightData, ParticleSystemData, WorldData};
+use crate::world::{CameraData, LightParams, ParticleSystemData, WorldData};
 use crate::{camera, resources};
 use cgmath::{Deg, Matrix4, Point3, Rad};
 use egui_wgpu::ScreenDescriptor;
@@ -60,7 +60,7 @@ const MAX_LIGHTS: usize = 10;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct LightData {
+pub struct LightArrayGpu {
     lights: [Light; MAX_LIGHTS],
     num_lights: u32,
     _padding: [u32; 3],
@@ -136,7 +136,7 @@ impl LightManager {
         }
     }
 
-    pub fn sync_to_gpu(&self) -> LightData {
+    pub fn sync_to_gpu(&self) -> LightArrayGpu {
         let mut gpu_lights = [Light::default(); MAX_LIGHTS];
         let mut write_idx = 0;
 
@@ -147,7 +147,7 @@ impl LightManager {
             }
         }
 
-        LightData {
+        LightArrayGpu {
             lights: gpu_lights,
             num_lights: write_idx as u32,
             _padding: [0; 3],
@@ -872,7 +872,7 @@ impl State {
         let mut lights = Vec::new();
         for i in 0..self.light_manager.max_lights() {
             if let Some(light) = self.light_manager.get_light(i) {
-                lights.push(WorldLightData {
+                lights.push(LightParams {
                     position: [light.position[0], light.position[1], light.position[2]],
                     color: light.color,
                 });
@@ -997,16 +997,17 @@ impl State {
     pub fn save_world_to_file(&self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
         let world = self.export_world();
         let json = serde_json::to_string(&world)?;
-        
-        let window = web_sys::window()
-            .ok_or("No window object")?;
-        let storage = window.local_storage()
+
+        let window = web_sys::window().ok_or("No window object")?;
+        let storage = window
+            .local_storage()
             .map_err(|e| format!("Failed to get localStorage: {:?}", e))?
             .ok_or("localStorage not available")?;
-        
-        storage.set_item(key, &json)
+
+        storage
+            .set_item(key, &json)
             .map_err(|e| format!("Failed to save to localStorage: {:?}", e))?;
-        
+
         log::info!("World saved to localStorage key: {}", key);
         Ok(())
     }
@@ -1024,16 +1025,17 @@ impl State {
     /// Load world from LocalStorage (web)
     #[cfg(target_arch = "wasm32")]
     pub fn load_world_from_file(&mut self, key: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let window = web_sys::window()
-            .ok_or("No window object")?;
-        let storage = window.local_storage()
+        let window = web_sys::window().ok_or("No window object")?;
+        let storage = window
+            .local_storage()
             .map_err(|e| format!("Failed to get localStorage: {:?}", e))?
             .ok_or("localStorage not available")?;
-        
-        let json = storage.get_item(key)
+
+        let json = storage
+            .get_item(key)
             .map_err(|e| format!("Failed to read from localStorage: {:?}", e))?
             .ok_or_else(|| format!("No saved world found with key: {}", key))?;
-        
+
         let world: WorldData = serde_json::from_str(&json)?;
         self.load_world(world);
         log::info!("World loaded from localStorage key: {}", key);

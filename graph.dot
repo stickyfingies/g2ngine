@@ -1,0 +1,127 @@
+digraph {
+
+    graph [
+        label="game",
+        labelloc=t,
+
+        pad=0.4,
+
+        // Consider rendering the graph using a different layout algorithm, such as:
+        // [dot, neato, twopi, circo, fdp, sfdp]
+        layout=neato,
+        overlap=false,
+        splines="line",
+        rankdir=LR,
+
+        fontname="Helvetica", 
+        fontsize="36",
+    ];
+
+    node [
+        fontname="monospace",
+        fontsize="10",
+        shape="record",
+        style="filled",
+    ];
+
+    edge [
+        fontname="monospace",
+        fontsize="10",
+    ];
+
+    "game" [label="crate|game", fillcolor="#5397c8"]; // "crate" node
+    "game::App" [label="pub struct|App", fillcolor="#81c169"]; // "struct" node
+    "game::app_ui" [label="pub(crate) mod|app_ui", fillcolor="#f8c04c"]; // "mod" node
+    "game::app_ui::UiActions" [label="pub struct|app_ui::UiActions", fillcolor="#81c169"]; // "struct" node
+    "game::camera" [label="pub(crate) mod|camera", fillcolor="#f8c04c"]; // "mod" node
+    "game::camera::Camera" [label="pub struct|camera::Camera", fillcolor="#81c169"]; // "struct" node
+    "game::camera::CameraController" [label="pub struct|camera::CameraController", fillcolor="#81c169"]; // "struct" node
+    "game::camera::Projection" [label="pub struct|camera::Projection", fillcolor="#81c169"]; // "struct" node
+    "game::egui" [label="pub(crate) mod|egui", fillcolor="#f8c04c"]; // "mod" node
+    "game::egui::EguiRenderer" [label="pub struct|egui::EguiRenderer", fillcolor="#81c169"]; // "struct" node
+    "game::engine_desktop::ScriptEngineDesktop" [label="pub struct|engine_desktop::ScriptEngineDesktop", fillcolor="#81c169"]; // "struct" node
+    "game::model" [label="pub(crate) mod|model", fillcolor="#f8c04c"]; // "mod" node
+    "game::model::DrawLight" [label="pub trait|model::DrawLight", fillcolor="#81c169"]; // "trait" node
+    "game::model::DrawModel" [label="pub trait|model::DrawModel", fillcolor="#81c169"]; // "trait" node
+    "game::model::Material" [label="pub struct|model::Material", fillcolor="#81c169"]; // "struct" node
+    "game::model::Mesh" [label="pub struct|model::Mesh", fillcolor="#81c169"]; // "struct" node
+    "game::model::Model" [label="pub struct|model::Model", fillcolor="#81c169"]; // "struct" node
+    "game::model::ModelVertex" [label="pub struct|model::ModelVertex", fillcolor="#81c169"]; // "struct" node
+    "game::model::Vertex" [label="pub trait|model::Vertex", fillcolor="#81c169"]; // "trait" node
+    "game::particle_system" [label="pub(crate) mod|particle_system", fillcolor="#f8c04c"]; // "mod" node
+    "game::particle_system::GridParams" [label="pub struct|particle_system::GridParams", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::GridParticleSystem" [label="pub struct|particle_system::GridParticleSystem", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::GridTransformUniform" [label="pub struct|particle_system::GridTransformUniform", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::InstanceRaw" [label="pub struct|particle_system::InstanceRaw", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::ParticleSystemDesc" [label="pub enum|particle_system::ParticleSystemDesc", fillcolor="#81c169"]; // "enum" node
+    "game::particle_system::ParticleSystemKind" [label="pub enum|particle_system::ParticleSystemKind", fillcolor="#81c169"]; // "enum" node
+    "game::particle_system::ParticleSystemManager" [label="pub struct|particle_system::ParticleSystemManager", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::ParticleSystemType" [label="pub trait|particle_system::ParticleSystemType", fillcolor="#81c169"]; // "trait" node
+    "game::particle_system::SphereParams" [label="pub struct|particle_system::SphereParams", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::SphereParticleSystem" [label="pub struct|particle_system::SphereParticleSystem", fillcolor="#81c169"]; // "struct" node
+    "game::particle_system::SphereTransformUniform" [label="pub struct|particle_system::SphereTransformUniform", fillcolor="#81c169"]; // "struct" node
+    "game::resources" [label="pub(crate) mod|resources", fillcolor="#f8c04c"]; // "mod" node
+    "game::scripting" [label="pub(crate) mod|scripting", fillcolor="#f8c04c"]; // "mod" node
+    "game::scripting::ScriptEngine" [label="pub trait|scripting::ScriptEngine", fillcolor="#81c169"]; // "trait" node
+    "game::state" [label="pub(crate) mod|state", fillcolor="#f8c04c"]; // "mod" node
+    "game::state::CameraUniform" [label="pub(self) struct|state::CameraUniform", fillcolor="#db5367"]; // "struct" node
+    "game::state::Light" [label="pub struct|state::Light", fillcolor="#81c169"]; // "struct" node
+    "game::state::LightArrayGpu" [label="pub struct|state::LightArrayGpu", fillcolor="#81c169"]; // "struct" node
+    "game::state::LightManager" [label="pub struct|state::LightManager", fillcolor="#81c169"]; // "struct" node
+    "game::state::State" [label="pub struct|state::State", fillcolor="#81c169"]; // "struct" node
+    "game::texture" [label="pub(crate) mod|texture", fillcolor="#f8c04c"]; // "mod" node
+    "game::texture::GpuTexture" [label="pub struct|texture::GpuTexture", fillcolor="#81c169"]; // "struct" node
+    "game::world" [label="pub mod|world", fillcolor="#81c169"]; // "mod" node
+    "game::world::CameraData" [label="pub struct|world::CameraData", fillcolor="#81c169"]; // "struct" node
+    "game::world::LightParams" [label="pub struct|world::LightParams", fillcolor="#81c169"]; // "struct" node
+    "game::world::ParticleSystemData" [label="pub enum|world::ParticleSystemData", fillcolor="#81c169"]; // "enum" node
+    "game::world::WorldData" [label="pub struct|world::WorldData", fillcolor="#81c169"]; // "struct" node
+
+    "game" -> "game::App" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::app_ui" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::camera" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::egui" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::engine_desktop::ScriptEngineDesktop" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::model" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::particle_system" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::resources" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::scripting" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::state" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::texture" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game" -> "game::world" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::app_ui" -> "game::app_ui::UiActions" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::camera" -> "game::camera::Camera" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::camera" -> "game::camera::CameraController" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::camera" -> "game::camera::Projection" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::egui" -> "game::egui::EguiRenderer" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::DrawLight" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::DrawModel" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::Material" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::Mesh" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::Model" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::ModelVertex" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::model" -> "game::model::Vertex" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::GridParams" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::GridParticleSystem" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::GridTransformUniform" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::InstanceRaw" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::ParticleSystemDesc" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::ParticleSystemKind" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::ParticleSystemManager" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::ParticleSystemType" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::SphereParams" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::SphereParticleSystem" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::particle_system" -> "game::particle_system::SphereTransformUniform" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::scripting" -> "game::scripting::ScriptEngine" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::state" -> "game::state::CameraUniform" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::state" -> "game::state::Light" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::state" -> "game::state::LightArrayGpu" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::state" -> "game::state::LightManager" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::state" -> "game::state::State" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::texture" -> "game::texture::GpuTexture" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::world" -> "game::world::CameraData" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::world" -> "game::world::LightParams" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::world" -> "game::world::ParticleSystemData" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+    "game::world" -> "game::world::WorldData" [label="owns", color="#000000", style="solid"] [constraint=true]; // "owns" edge
+
+}

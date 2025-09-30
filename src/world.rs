@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct WorldData {
     pub background_color: [f32; 4],
     pub camera: CameraData,
-    pub lights: Vec<LightData>,
+    pub lights: Vec<LightParams>,
     pub particle_systems: Vec<ParticleSystemData>,
 }
 
@@ -45,9 +45,9 @@ impl Default for CameraData {
     }
 }
 
-/// Light source data
+/// Light source parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LightData {
+pub struct LightParams {
     pub position: [f32; 3],
     pub color: [f32; 4],
 }

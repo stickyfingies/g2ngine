@@ -28,7 +28,7 @@ pub fn app_ui(
     particle_uniform_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> UiActions {
     let mut actions = UiActions::default();
-    egui::Window::new("Demo GUI")
+    egui::Window::new("Scene Editor")
         .default_open(true)
         .max_width(400.0)
         .max_height(600.0)
@@ -437,11 +437,6 @@ pub fn app_ui(
 
             ui.label(format!("Delta Time: {:.2} ms", delta_time_ms));
             ui.label(format!("FPS: {:.1}", 1000.0 / delta_time_ms));
-
-            ui.separator();
-
-            ui.label("Your 3D scene continues to render in the background!");
-            ui.label("Camera controls should still work when not over the GUI.");
         });
 
     actions
