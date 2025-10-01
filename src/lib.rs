@@ -46,51 +46,44 @@ impl App {
 }
 
 impl ApplicationHandler<State> for App {
+    // [Browser]
+    // Initializing the application state is an asynchronous operation,
+    // which we cannot block/await in wasm due to runtime limitations.
+    // Instead, we launch a background process where we can await it.
+    // When it finishes, a message is sent to the event loop containing
+    // the newly-created application state.
+    #[cfg(target_arch = "wasm32")]
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        #[allow(unused_mut)]
-        let mut window_attributes = Window::default_attributes();
+        use wasm_bindgen::JsCast;
+        use winit::platform::web::WindowAttributesExtWebSys;
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            use wasm_bindgen::JsCast;
-            use winit::platform::web::WindowAttributesExtWebSys;
+        const CANVAS_ID: &str = "canvas";
 
-            const CANVAS_ID: &str = "canvas";
-
-            let window = wgpu::web_sys::window().unwrap_throw();
-            let document = window.document().unwrap_throw();
-            let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw();
-            let html_canvas_element = canvas.unchecked_into();
-            window_attributes = window_attributes.with_canvas(Some(html_canvas_element));
-        }
-
+        let window = wgpu::web_sys::window().unwrap_throw();
+        let document = window.document().unwrap_throw();
+        let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw();
+        let html_canvas_element = canvas.unchecked_into();
+        let window_attributes = Window::default_attributes().with_canvas(Some(html_canvas_element));
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
-        // [Desktop]
-        // This is pretty basic - just await (block_on) async initialization.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let state = pollster::block_on(State::new(window)).unwrap();
-            self.state = Some(state);
+        if let Some(proxy) = self.proxy.take() {
+            wasm_bindgen_futures::spawn_local(async move {
+                let state = State::new(window)
+                    .await
+                    .expect("Unable to create canvas!!!");
+                assert!(proxy.send_event(state).is_ok());
+            });
         }
+    }
 
-        // [Browser]
-        // Initializing the application state is an asynchronous operation,
-        // which we cannot block/await in wasm due to runtime limitations.
-        // Instead, we launch a background process where we can await it.
-        // When it finishes, a message is sent to the event loop containing
-        // the newly-created application state.
-        #[cfg(target_arch = "wasm32")]
-        {
-            if let Some(proxy) = self.proxy.take() {
-                wasm_bindgen_futures::spawn_local(async move {
-                    let state = State::new(window)
-                        .await
-                        .expect("Unable to create canvas!!!");
-                    assert!(proxy.send_event(state).is_ok());
-                });
-            }
-        }
+    // [Desktop]
+    // This is pretty basic - just await (block_on) async initialization.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        let window_attributes = Window::default_attributes();
+        let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
+        let state = pollster::block_on(State::new(window)).unwrap();
+        self.state = Some(state);
     }
 
     #[allow(unused_mut)]
