@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
-const DEBOUNCE_MS: u64 = 20;
+/// Set to ~50 to only upload changes to GPU every 'ms
+const DEBOUNCE_MS: u64 = 0;
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -64,6 +65,15 @@ impl InstanceRaw {
 }
 
 // ============================================================================
+// INSTANCE GENERATOR TRAIT
+// ============================================================================
+
+pub trait InstanceGenerator {
+    fn generate(&self) -> Vec<InstanceRaw>;
+    fn instance_count(&self) -> usize;
+}
+
+// ============================================================================
 // GENERATOR PARAMETERS
 // ============================================================================
 
@@ -74,95 +84,23 @@ pub struct GridParams {
     pub center: [f32; 3],
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SphereParams {
-    pub count: usize,
-    pub radius: f32,
-    pub center: [f32; 3],
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum GeneratorType {
-    #[serde(rename = "grid")]
-    Grid(GridParams),
-    #[serde(rename = "sphere")]
-    Sphere(SphereParams),
-}
-
-/// This is used by demo.js to return a description of the original starting particle system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ParticleSystemDesc {
-    #[serde(rename = "grid")]
-    Grid { count: usize, params: GridParams },
-}
-
-// ============================================================================
-// UNIFIED PARTICLE SYSTEM
-// ============================================================================
-
-pub struct ParticleSystem {
-    name: String,
-    model_path: String,
-    material_key: String,
-    generator: GeneratorType,
-    instance_buffer: wgpu::Buffer,
-    num_instances: u32,
-    needs_rebuild: bool,
-    last_edit_time: web_time::Instant,
-}
-
-impl ParticleSystem {
-    pub fn new(
-        device: &wgpu::Device,
-        name: String,
-        model_path: String,
-        material_key: String,
-        generator: GeneratorType,
-    ) -> Self {
-        let instances = Self::generate_instances(&generator);
-
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Particle System '{}' Instance Buffer", name)),
-            contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        Self {
-            name,
-            model_path,
-            material_key,
-            generator,
-            instance_buffer,
-            num_instances: instances.len() as u32,
-            needs_rebuild: false,
-            last_edit_time: web_time::Instant::now(),
-        }
+impl InstanceGenerator for GridParams {
+    fn instance_count(&self) -> usize {
+        self.rows * self.rows
     }
 
-    fn generate_instances(generator: &GeneratorType) -> Vec<InstanceRaw> {
-        match generator {
-            GeneratorType::Grid(params) => Self::generate_grid_instances(params),
-            GeneratorType::Sphere(params) => Self::generate_sphere_instances(params),
-        }
-    }
-
-    fn generate_grid_instances(params: &GridParams) -> Vec<InstanceRaw> {
-        let count = params.rows * params.rows;
-        let rows = params.rows;
+    fn generate(&self) -> Vec<InstanceRaw> {
+        let count = self.instance_count();
+        let rows = self.rows;
         let displacement = Vector3::new(rows as f32 * 0.5, 0.0, rows as f32 * 0.5);
-        let center = Vector3::new(params.center[0], params.center[1], params.center[2]);
+        let center = Vector3::new(self.center[0], self.center[1], self.center[2]);
 
         let mut instances = Vec::with_capacity(count);
 
         for x in 0..rows {
             for z in 0..rows {
-                // Compute grid position
                 let grid_position = Vector3::new(x as f32, 0.0, z as f32) - displacement;
-
-                // Apply spacing and center to get world position (fully on CPU now)
-                let world_position = grid_position * params.spacing + center;
+                let world_position = grid_position * self.spacing + center;
 
                 let rotation = if grid_position.magnitude2() < 0.001 {
                     Quaternion::new(1.0, 0.0, 0.0, 0.0)
@@ -191,13 +129,25 @@ impl ParticleSystem {
 
         instances
     }
+}
 
-    fn generate_sphere_instances(params: &SphereParams) -> Vec<InstanceRaw> {
-        let count = params.count;
-        let center = Vector3::new(params.center[0], params.center[1], params.center[2]);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SphereParams {
+    pub count: usize,
+    pub radius: f32,
+    pub center: [f32; 3],
+}
+
+impl InstanceGenerator for SphereParams {
+    fn instance_count(&self) -> usize {
+        self.count
+    }
+
+    fn generate(&self) -> Vec<InstanceRaw> {
+        let count = self.count;
+        let center = Vector3::new(self.center[0], self.center[1], self.center[2]);
         let mut instances = Vec::with_capacity(count);
 
-        // Golden spiral / Fibonacci sphere distribution
         let golden_ratio = (1.0 + 5.0_f32.sqrt()) / 2.0;
         let angle_increment = std::f32::consts::PI * 2.0 * golden_ratio;
 
@@ -211,11 +161,8 @@ impl ParticleSystem {
             let z = inclination.cos();
 
             let unit_position = Vector3::new(x, y, z);
+            let world_position = unit_position * self.radius + center;
 
-            // Apply radius and center to get world position (fully on CPU now)
-            let world_position = unit_position * params.radius + center;
-
-            // Rotation to face outward from center
             let up = Vector3::new(0.0, 1.0, 0.0);
             let rotation = if unit_position.magnitude2() > 0.001 {
                 let forward = unit_position.normalize();
@@ -237,6 +184,86 @@ impl ParticleSystem {
         }
 
         instances
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum GeneratorType {
+    #[serde(rename = "grid")]
+    Grid(GridParams),
+    #[serde(rename = "sphere")]
+    Sphere(SphereParams),
+}
+
+impl GeneratorType {
+    pub fn generate(&self) -> Vec<InstanceRaw> {
+        match self {
+            GeneratorType::Grid(params) => params.generate(),
+            GeneratorType::Sphere(params) => params.generate(),
+        }
+    }
+
+    pub fn instance_count(&self) -> usize {
+        match self {
+            GeneratorType::Grid(params) => params.instance_count(),
+            GeneratorType::Sphere(params) => params.instance_count(),
+        }
+    }
+}
+
+/// This is used by demo.js to return a description of the original starting particle system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ParticleSystemDesc {
+    #[serde(rename = "grid")]
+    Grid { count: usize, params: GridParams },
+}
+
+// ============================================================================
+// UNIFIED PARTICLE SYSTEM
+// ============================================================================
+
+pub struct ParticleSystem {
+    name: String,
+    model_path: String,
+    material_key: String,
+    generator: GeneratorType,
+    instance_buffer: wgpu::Buffer,
+    buffer_capacity: usize,
+    current_instance_count: usize,
+    needs_rebuild: bool,
+    last_edit_time: web_time::Instant,
+}
+
+impl ParticleSystem {
+    pub fn new(
+        device: &wgpu::Device,
+        name: String,
+        model_path: String,
+        material_key: String,
+        generator: GeneratorType,
+    ) -> Self {
+        let instances = generator.generate();
+        let instance_count = instances.len();
+
+        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("Particle System '{}' Instance Buffer", name)),
+            contents: bytemuck::cast_slice(&instances),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        Self {
+            name,
+            model_path,
+            material_key,
+            generator,
+            instance_buffer,
+            buffer_capacity: instance_count,
+            current_instance_count: instance_count,
+            needs_rebuild: false,
+            last_edit_time: web_time::Instant::now(),
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -273,7 +300,7 @@ impl ParticleSystem {
     }
 
     pub fn num_instances(&self) -> u32 {
-        self.num_instances
+        self.current_instance_count as u32
     }
 
     pub fn instance_buffer(&self) -> &wgpu::Buffer {
@@ -284,16 +311,24 @@ impl ParticleSystem {
         self.needs_rebuild && self.last_edit_time.elapsed().as_millis() >= DEBOUNCE_MS as u128
     }
 
-    pub fn rebuild(&mut self, device: &wgpu::Device) {
-        let instances = Self::generate_instances(&self.generator);
-        self.num_instances = instances.len() as u32;
+    pub fn rebuild(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let instances = self.generator.generate();
+        let new_count = instances.len();
 
-        self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Particle System '{}' Instance Buffer", self.name)),
-            contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        if new_count != self.buffer_capacity {
+            // Size changed - need to reallocate
+            self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("Particle System '{}' Instance Buffer", self.name)),
+                contents: bytemuck::cast_slice(&instances),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            });
+            self.buffer_capacity = new_count;
+        } else {
+            // Same size - just update contents with queue.write_buffer
+            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
+        }
 
+        self.current_instance_count = new_count;
         self.needs_rebuild = false;
     }
 

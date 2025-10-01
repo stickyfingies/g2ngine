@@ -756,7 +756,7 @@ impl State {
         // Rebuild particle systems if needed (before render pass)
         for (_name, system) in self.particle_system_manager.systems_mut() {
             if system.needs_rebuild() {
-                system.rebuild(&self.device);
+                system.rebuild(&self.device, &self.queue);
             }
         }
 

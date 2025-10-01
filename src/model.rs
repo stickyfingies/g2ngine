@@ -256,14 +256,6 @@ pub trait DrawModel<'a> {
         camera_bind_group: &'a wgpu::BindGroup,
         light_bind_group: &'a wgpu::BindGroup,
     );
-
-    fn draw_model_instanced(
-        &mut self,
-        model: &'a Model,
-        instances: Range<u32>,
-        camera_bind_group: &'a wgpu::BindGroup,
-        light_bind_group: &'a wgpu::BindGroup,
-    );
 }
 
 impl<'a, 'b> DrawModel<'b> for wgpu::RenderPass<'a>
@@ -285,35 +277,12 @@ where
         self.set_bind_group(2, light_bind_group, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
-
-    fn draw_model_instanced(
-        &mut self,
-        _model: &'b Model,
-        _instances: Range<u32>,
-        _camera_bind_group: &'b wgpu::BindGroup,
-        _light_bind_group: &'b wgpu::BindGroup,
-    ) {
-        // DEPRECATED: Use draw_mesh_instanced with explicit material lookup instead.
-        // Models no longer store materials directly - they're in a central registry.
-        // This method is kept for trait compatibility but should not be used.
-        panic!(
-            "draw_model_instanced is deprecated - use draw_mesh_instanced with material registry lookup"
-        );
-    }
 }
 
 pub trait DrawLight<'a> {
     fn draw_light_mesh_instanced(
         &mut self,
         mesh: &'a Mesh,
-        instances: Range<u32>,
-        camera_bind_group: &'a wgpu::BindGroup,
-        light_bind_group: &'a wgpu::BindGroup,
-    );
-
-    fn draw_light_model_instanced(
-        &mut self,
-        model: &'a Model,
         instances: Range<u32>,
         camera_bind_group: &'a wgpu::BindGroup,
         light_bind_group: &'a wgpu::BindGroup,
@@ -336,22 +305,5 @@ where
         self.set_bind_group(0, camera_bind_group, &[]);
         self.set_bind_group(1, light_bind_group, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
-    }
-
-    fn draw_light_model_instanced(
-        &mut self,
-        model: &'b Model,
-        instances: Range<u32>,
-        camera_bind_group: &'b wgpu::BindGroup,
-        light_bind_group: &'b wgpu::BindGroup,
-    ) {
-        for mesh in &model.meshes {
-            self.draw_light_mesh_instanced(
-                mesh,
-                instances.clone(),
-                camera_bind_group,
-                light_bind_group,
-            );
-        }
     }
 }
