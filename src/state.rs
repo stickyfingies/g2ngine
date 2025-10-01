@@ -80,6 +80,7 @@ pub struct LightManager {
     active_mask: u32,
     dirty: bool,
     model_path: String,
+    material_key: String,
 }
 
 impl LightManager {
@@ -89,6 +90,7 @@ impl LightManager {
             active_mask: 0,
             dirty: false,
             model_path: "teapot.obj".to_string(),
+            material_key: "teapot/default".to_string(),
         }
     }
 
@@ -106,6 +108,14 @@ impl LightManager {
 
     pub fn set_model_path(&mut self, path: String) {
         self.model_path = path;
+    }
+
+    pub fn material_key(&self) -> &str {
+        &self.material_key
+    }
+
+    pub fn set_material_key(&mut self, key: String) {
+        self.material_key = key;
     }
 
     pub fn add_light(&mut self, pos: [f32; 3], color: [f32; 4]) -> Option<usize> {
@@ -273,6 +283,7 @@ pub struct State {
     window: Arc<Window>,
     clear_color: wgpu::Color,
     models: std::collections::HashMap<String, Arc<model::Model>>,
+    materials: std::collections::HashMap<String, Arc<model::Material>>,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     #[cfg(not(target_arch = "wasm32"))]
     script_engine: ScriptEngineDesktop,
@@ -535,6 +546,7 @@ impl State {
             "main".to_string(),
             params,
             "teapot.obj".to_string(),
+            "teapot/default".to_string(),
             &grid_transform_bind_group_layout,
         );
 
@@ -542,12 +554,19 @@ impl State {
 
         // Load initial model into HashMap
         let mut models = std::collections::HashMap::new();
-        let teapot_model = Arc::new(
+        let mut materials = std::collections::HashMap::new();
+
+        let (teapot_model, teapot_materials) =
             model::load_model("teapot.obj", &device, &queue, &texture_bind_group_layout)
                 .await
-                .unwrap(),
-        );
-        models.insert("teapot.obj".to_string(), teapot_model);
+                .unwrap();
+
+        // Move materials directly into registry (no cloning needed)
+        for (key, material) in teapot_materials {
+            materials.insert(key, Arc::new(material));
+        }
+
+        models.insert("teapot.obj".to_string(), Arc::new(teapot_model));
 
         let egui_renderer = EguiRenderer::new(
             &device,
@@ -588,6 +607,7 @@ impl State {
             },
             script_engine,
             models,
+            materials,
             texture_bind_group_layout,
             elapsed_time: 0.0,
         })
@@ -602,15 +622,20 @@ impl State {
         if let Some(model) = self.models.get(path) {
             Ok(Arc::clone(model))
         } else {
-            let model = Arc::new(
-                model::load_model(
-                    path,
-                    &self.device,
-                    &self.queue,
-                    &self.texture_bind_group_layout,
-                )
-                .await?,
-            );
+            let (model, materials) = model::load_model(
+                path,
+                &self.device,
+                &self.queue,
+                &self.texture_bind_group_layout,
+            )
+            .await?;
+
+            // Register materials into the materials registry
+            for (key, material) in materials {
+                self.materials.insert(key, Arc::new(material));
+            }
+
+            let model = Arc::new(model);
             self.models.insert(path.to_string(), Arc::clone(&model));
             Ok(model)
         }
@@ -804,13 +829,19 @@ impl State {
 
             // Render lights
             render_pass.set_pipeline(&self.light_render_pipeline);
-            if let Some(light_model) = self.models.get(self.light_manager.model_path()) {
-                render_pass.draw_light_model_instanced(
-                    light_model,
-                    0..self.light_manager.num_lights(),
-                    &self.camera_bind_group,
-                    &self.light_bind_group,
-                );
+            if let (Some(light_model), Some(light_material)) = (
+                self.models.get(self.light_manager.model_path()),
+                self.materials.get(self.light_manager.material_key()),
+            ) {
+                // Draw first mesh of the light model with the specified material
+                if let Some(mesh) = light_model.meshes.first() {
+                    render_pass.draw_light_mesh_instanced(
+                        mesh,
+                        0..self.light_manager.num_lights(),
+                        &self.camera_bind_group,
+                        &self.light_bind_group,
+                    );
+                }
             }
 
             // Render particle systems - batched by type
@@ -818,29 +849,43 @@ impl State {
 
             // Batch 1: All grid systems
             for (_name, grid) in self.particle_system_manager.grids() {
-                if let Some(model) = self.models.get(grid.model_path()) {
+                if let (Some(model), Some(material)) = (
+                    self.models.get(grid.model_path()),
+                    self.materials.get(grid.material_key()),
+                ) {
                     render_pass.set_vertex_buffer(1, grid.instance_buffer().slice(..));
                     render_pass.set_bind_group(3, grid.uniform_bind_group(), &[]);
-                    render_pass.draw_model_instanced(
-                        model,
-                        0..grid.num_instances(),
-                        &self.camera_bind_group,
-                        &self.light_bind_group,
-                    );
+                    // Draw first mesh with specified material
+                    if let Some(mesh) = model.meshes.first() {
+                        render_pass.draw_mesh_instanced(
+                            mesh,
+                            material,
+                            0..grid.num_instances(),
+                            &self.camera_bind_group,
+                            &self.light_bind_group,
+                        );
+                    }
                 }
             }
 
             // Batch 2: All sphere systems (if any)
             for (_name, sphere) in self.particle_system_manager.spheres() {
-                if let Some(model) = self.models.get(sphere.model_path()) {
+                if let (Some(model), Some(material)) = (
+                    self.models.get(sphere.model_path()),
+                    self.materials.get(sphere.material_key()),
+                ) {
                     render_pass.set_vertex_buffer(1, sphere.instance_buffer().slice(..));
                     render_pass.set_bind_group(3, sphere.uniform_bind_group(), &[]);
-                    render_pass.draw_model_instanced(
-                        model,
-                        0..sphere.num_instances(),
-                        &self.camera_bind_group,
-                        &self.light_bind_group,
-                    );
+                    // Draw first mesh with specified material
+                    if let Some(mesh) = model.meshes.first() {
+                        render_pass.draw_mesh_instanced(
+                            mesh,
+                            material,
+                            0..sphere.num_instances(),
+                            &self.camera_bind_group,
+                            &self.light_bind_group,
+                        );
+                    }
                 }
             }
         }
@@ -873,6 +918,8 @@ impl State {
                     queue,
                     &self.device,
                     &self.particle_uniform_bind_group_layout,
+                    &self.models,
+                    &self.materials,
                 )
             },
         );
@@ -919,6 +966,7 @@ impl State {
                     position: [light.position[0], light.position[1], light.position[2]],
                     color: light.color,
                     model: self.light_manager.model_path().to_string(),
+                    material_key: self.light_manager.material_key().to_string(),
                 });
             }
         }
@@ -930,6 +978,7 @@ impl State {
                 name: name.clone(),
                 params: grid.params().clone(),
                 model: grid.model_path().to_string(),
+                material_key: grid.material_key().to_string(),
             });
         }
         for (name, sphere) in self.particle_system_manager.spheres() {
@@ -937,6 +986,7 @@ impl State {
                 name: name.clone(),
                 params: sphere.params().clone(),
                 model: sphere.model_path().to_string(),
+                material_key: sphere.material_key().to_string(),
             });
         }
 
@@ -986,6 +1036,8 @@ impl State {
         self.light_manager = LightManager::new();
         if let Some(first_light) = data.lights.first() {
             self.light_manager.set_model_path(first_light.model.clone());
+            self.light_manager
+                .set_material_key(first_light.material_key.clone());
         }
         for light_data in data.lights {
             self.light_manager
@@ -1006,12 +1058,14 @@ impl State {
                     name,
                     params,
                     model,
+                    material_key,
                 } => {
                     let grid = GridParticleSystem::new(
                         &self.device,
                         name.clone(),
                         params,
                         model,
+                        material_key,
                         &self.particle_uniform_bind_group_layout,
                     );
                     self.particle_system_manager.add_grid(name, grid);
@@ -1020,12 +1074,14 @@ impl State {
                     name,
                     params,
                     model,
+                    material_key,
                 } => {
                     let sphere = SphereParticleSystem::new(
                         &self.device,
                         name.clone(),
                         params,
                         model,
+                        material_key,
                         &self.particle_uniform_bind_group_layout,
                     );
                     self.particle_system_manager.add_sphere(name, sphere);

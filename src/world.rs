@@ -52,6 +52,8 @@ pub struct LightParams {
     pub color: [f32; 4],
     #[serde(default = "default_model")]
     pub model: String,
+    #[serde(default = "default_material_key")]
+    pub material_key: String,
 }
 
 /// Particle system configuration
@@ -64,6 +66,8 @@ pub enum ParticleSystemData {
         params: GridParams,
         #[serde(default = "default_model")]
         model: String,
+        #[serde(default = "default_material_key")]
+        material_key: String,
     },
     #[serde(rename = "sphere")]
     Sphere {
@@ -71,11 +75,17 @@ pub enum ParticleSystemData {
         params: SphereParams,
         #[serde(default = "default_model")]
         model: String,
+        #[serde(default = "default_material_key")]
+        material_key: String,
     },
 }
 
 fn default_model() -> String {
     "teapot.obj".to_string()
+}
+
+fn default_material_key() -> String {
+    "teapot/default".to_string()
 }
 
 impl ParticleSystemData {

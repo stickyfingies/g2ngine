@@ -26,6 +26,8 @@ pub fn app_ui(
     queue: &wgpu::Queue,
     device: &wgpu::Device,
     particle_uniform_bind_group_layout: &wgpu::BindGroupLayout,
+    models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
+    materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::Material>>,
 ) -> UiActions {
     let mut actions = UiActions::default();
     egui::Window::new("Scene Editor")
@@ -172,6 +174,7 @@ pub fn app_ui(
                                 name.clone(),
                                 params,
                                 "teapot.obj".to_string(),
+                                "teapot/default".to_string(),
                                 particle_uniform_bind_group_layout,
                             );
                             particle_system_manager.add_grid(name, grid);
@@ -189,6 +192,7 @@ pub fn app_ui(
                                 name.clone(),
                                 params,
                                 "teapot.obj".to_string(),
+                                "teapot/default".to_string(),
                                 particle_uniform_bind_group_layout,
                             );
                             particle_system_manager.add_sphere(name, sphere);
@@ -433,6 +437,31 @@ pub fn app_ui(
                 });
 
                 ui.label("Saves to: world.json");
+            });
+
+            ui.separator();
+
+            // Materials Inspection
+            ui.collapsing(format!("🎨 Materials ({})", materials.len()), |ui| {
+                for (key, material) in materials.iter() {
+                    ui.label(format!("• {} (texture: {})", material.name, key));
+                }
+            });
+
+            ui.separator();
+
+            // Geometries Inspection
+            ui.collapsing(format!("🔷 Geometries ({})", models.len()), |ui| {
+                for (path, model) in models.iter() {
+                    let total_vertices: u32 = model.meshes.iter().map(|m| m.vertex_count).sum();
+                    ui.label(format!(
+                        "• {} ({} mesh{}, {} vertices)",
+                        model.name,
+                        model.meshes.len(),
+                        if model.meshes.len() == 1 { "" } else { "es" },
+                        total_vertices
+                    ));
+                }
             });
 
             ui.separator();

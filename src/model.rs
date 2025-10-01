@@ -50,8 +50,9 @@ impl Vertex for ModelVertex {
 }
 
 pub struct Model {
+    pub name: String,
     pub meshes: Vec<Mesh>,
-    pub materials: Vec<Material>,
+    pub material_keys: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -61,13 +62,13 @@ pub struct Material {
     pub bind_group: wgpu::BindGroup,
 }
 
-#[allow(dead_code)]
 pub struct Mesh {
     pub name: String,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub num_elements: u32,
-    pub material: usize,
+    pub vertex_count: u32,
+    pub material_key: String,
 }
 
 pub async fn load_model(
@@ -75,7 +76,7 @@ pub async fn load_model(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
-) -> anyhow::Result<Model> {
+) -> anyhow::Result<(Model, std::collections::HashMap<String, Material>)> {
     let obj_text = load_string(file_name).await?;
     let obj_cursor = Cursor::new(obj_text);
     let mut obj_reader = BufReader::new(obj_cursor);
@@ -94,8 +95,18 @@ pub async fn load_model(
     )
     .await?;
 
-    let mut materials = Vec::new();
+    // Extract model name from file path (e.g., "teapot.obj" -> "teapot")
+    let model_name = file_name
+        .split('/')
+        .last()
+        .unwrap_or(file_name)
+        .trim_end_matches(".obj");
+
+    let mut materials_map = std::collections::HashMap::new();
+    let mut material_keys = Vec::new();
+
     for mat in obj_materials? {
+        let material_key = format!("{}/{}", model_name, mat.name);
         let diffuse_texture_filename = &mat.diffuse_texture;
         let diffuse_texture_bytes = load_binary(&diffuse_texture_filename).await?;
         let diffuse_texture = GpuTexture::from_bytes(
@@ -120,15 +131,20 @@ pub async fn load_model(
             ],
         });
 
-        materials.push(Material {
-            name: mat.name,
-            diffuse_texture,
-            bind_group,
-        })
+        materials_map.insert(
+            material_key.clone(),
+            Material {
+                name: mat.name,
+                diffuse_texture,
+                bind_group,
+            },
+        );
+        material_keys.push(material_key);
     }
 
     // If no materials were loaded, create a default white material
-    if materials.is_empty() {
+    if materials_map.is_empty() {
+        let material_key = format!("{}/default", model_name);
         let diffuse_texture_bytes = load_binary("white.png").await?;
         let diffuse_texture =
             GpuTexture::from_bytes(device, queue, &diffuse_texture_bytes, "white.png")?;
@@ -148,11 +164,15 @@ pub async fn load_model(
             ],
         });
 
-        materials.push(Material {
-            name: "default".to_string(),
-            diffuse_texture,
-            bind_group,
-        });
+        materials_map.insert(
+            material_key.clone(),
+            Material {
+                name: "default".to_string(),
+                diffuse_texture,
+                bind_group,
+            },
+        );
+        material_keys.push(material_key);
     }
 
     let meshes = models
@@ -200,17 +220,31 @@ pub async fn load_model(
                 usage: wgpu::BufferUsages::INDEX,
             });
 
+            let material_index = model.mesh.material_id.unwrap_or(0);
+            let material_key = material_keys
+                .get(material_index)
+                .cloned()
+                .unwrap_or_else(|| material_keys[0].clone());
+
             Mesh {
                 name: file_name.to_string(),
                 vertex_buffer,
                 index_buffer,
                 num_elements: model.mesh.indices.len() as u32,
-                material: model.mesh.material_id.unwrap_or(0),
+                vertex_count: vertices.len() as u32,
+                material_key,
             }
         })
         .collect::<Vec<_>>();
 
-    Ok(Model { meshes, materials })
+    Ok((
+        Model {
+            name: model_name.to_string(),
+            meshes,
+            material_keys,
+        },
+        materials_map,
+    ))
 }
 
 pub trait DrawModel<'a> {
@@ -254,20 +288,17 @@ where
 
     fn draw_model_instanced(
         &mut self,
-        model: &'b Model,
-        instances: Range<u32>,
-        camera_bind_group: &'b wgpu::BindGroup,
-        light_bind_group: &'b wgpu::BindGroup,
+        _model: &'b Model,
+        _instances: Range<u32>,
+        _camera_bind_group: &'b wgpu::BindGroup,
+        _light_bind_group: &'b wgpu::BindGroup,
     ) {
-        for mesh in &model.meshes {
-            self.draw_mesh_instanced(
-                mesh,
-                &model.materials[mesh.material],
-                instances.clone(),
-                camera_bind_group,
-                light_bind_group,
-            );
-        }
+        // DEPRECATED: Use draw_mesh_instanced with explicit material lookup instead.
+        // Models no longer store materials directly - they're in a central registry.
+        // This method is kept for trait compatibility but should not be used.
+        panic!(
+            "draw_model_instanced is deprecated - use draw_mesh_instanced with material registry lookup"
+        );
     }
 }
 

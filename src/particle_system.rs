@@ -122,6 +122,7 @@ pub struct GridParticleSystem {
     name: String,
     params: GridParams,
     model_path: String,
+    material_key: String,
     instance_buffer: wgpu::Buffer,
     num_instances: u32,
     uniform_buffer: wgpu::Buffer,
@@ -136,6 +137,7 @@ impl GridParticleSystem {
         name: String,
         params: GridParams,
         model_path: String,
+        material_key: String,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let count = params.rows * params.rows;
@@ -171,6 +173,7 @@ impl GridParticleSystem {
             name,
             params,
             model_path,
+            material_key,
             instance_buffer,
             num_instances: instances.len() as u32,
             uniform_buffer,
@@ -223,6 +226,10 @@ impl GridParticleSystem {
 
     pub fn model_path(&self) -> &str {
         &self.model_path
+    }
+
+    pub fn material_key(&self) -> &str {
+        &self.material_key
     }
 
     pub fn update_params(&mut self, params: GridParams) {
@@ -306,6 +313,7 @@ pub struct SphereParticleSystem {
     name: String,
     params: SphereParams,
     model_path: String,
+    material_key: String,
     instance_buffer: wgpu::Buffer,
     num_instances: u32,
     uniform_buffer: wgpu::Buffer,
@@ -320,6 +328,7 @@ impl SphereParticleSystem {
         name: String,
         params: SphereParams,
         model_path: String,
+        material_key: String,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let instances = Self::generate_sphere_instances(&params);
@@ -354,6 +363,7 @@ impl SphereParticleSystem {
             name,
             params,
             model_path,
+            material_key,
             instance_buffer,
             num_instances: instances.len() as u32,
             uniform_buffer,
@@ -412,6 +422,10 @@ impl SphereParticleSystem {
 
     pub fn model_path(&self) -> &str {
         &self.model_path
+    }
+
+    pub fn material_key(&self) -> &str {
+        &self.material_key
     }
 
     pub fn update_params(&mut self, params: SphereParams) {
