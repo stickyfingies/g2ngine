@@ -288,6 +288,8 @@ pub struct State {
     #[cfg(target_arch = "wasm32")]
     script_engine: ScriptEngineWeb,
     elapsed_time: f32,
+    pending_model_loads: Vec<String>,
+    ui_state: crate::app_ui::UiState,
 }
 
 impl State {
@@ -590,6 +592,8 @@ impl State {
             materials,
             texture_bind_group_layout,
             elapsed_time: 0.0,
+            pending_model_loads: Vec::new(),
+            ui_state: crate::app_ui::UiState::default(),
         })
     }
 
@@ -696,6 +700,72 @@ impl State {
             self.queue
                 .write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[lights]));
             self.light_manager.clear_dirty();
+        }
+
+        // Process pending model loads
+        if !self.pending_model_loads.is_empty() {
+            let paths_to_load = std::mem::take(&mut self.pending_model_loads);
+
+            for path in paths_to_load {
+                // Check if already loaded
+                if self.models.contains_key(&path) {
+                    log::info!("Model '{}' already loaded", path);
+                    continue;
+                }
+
+                log::info!("Loading model: {}", path);
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // Desktop: block on the async load
+                    match pollster::block_on(model::load_model(
+                        &path,
+                        &self.device,
+                        &self.queue,
+                        &self.texture_bind_group_layout,
+                    )) {
+                        Ok((loaded_model, materials)) => {
+                            // Register materials
+                            for (key, material) in materials {
+                                self.materials.insert(key, Arc::new(material));
+                            }
+                            // Register model
+                            self.models.insert(path.clone(), Arc::new(loaded_model));
+                            log::info!("Model '{}' loaded successfully", path);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load model '{}': {}", path, e);
+                        }
+                    }
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // Web: spawn async task
+                    // We need to move required data into the closure
+                    let device = self.device.clone();
+                    let queue = self.queue.clone();
+                    let texture_bind_group_layout = self.texture_bind_group_layout.clone();
+
+                    // Note: We can't easily update self.models/materials from the spawned task
+                    // This would require Arc<Mutex<>> or channels. For now, log a warning.
+                    log::warn!("Web model loading spawned - model won't be immediately available");
+
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match model::load_model(&path, &device, &queue, &texture_bind_group_layout)
+                            .await
+                        {
+                            Ok(_) => {
+                                log::info!("Model '{}' loaded (but not yet registered)", path);
+                                // TODO: Send loaded model back via channel
+                            }
+                            Err(e) => {
+                                log::error!("Failed to load model '{}': {}", path, e);
+                            }
+                        }
+                    });
+                }
+            }
         }
 
         // Call JS update function every frame and capture clear color
@@ -869,6 +939,7 @@ impl State {
                     &self.device,
                     &self.models,
                     &self.materials,
+                    &mut self.ui_state,
                 )
             },
         );
@@ -883,6 +954,9 @@ impl State {
             if let Err(e) = self.load_world_from_file("world.json") {
                 log::error!("Failed to load world: {}", e);
             }
+        }
+        if let Some(model_path) = ui_actions.model_to_load {
+            self.pending_model_loads.push(model_path);
         }
 
         self.queue.submit(iter::once(encoder.finish()));

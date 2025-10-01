@@ -4,9 +4,22 @@ use crate::particle_system::{
 use crate::state::LightManager;
 use egui::{Align2, Context};
 
+pub struct UiState {
+    pub model_path_input: String,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            model_path_input: String::new(),
+        }
+    }
+}
+
 pub struct UiActions {
     pub save_requested: bool,
     pub load_requested: bool,
+    pub model_to_load: Option<String>,
 }
 
 impl Default for UiActions {
@@ -14,6 +27,7 @@ impl Default for UiActions {
         Self {
             save_requested: false,
             load_requested: false,
+            model_to_load: None,
         }
     }
 }
@@ -29,6 +43,7 @@ pub fn app_ui(
     device: &wgpu::Device,
     models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
     materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::Material>>,
+    ui_state: &mut UiState,
 ) -> UiActions {
     let mut actions = UiActions::default();
     egui::Window::new("Scene Editor")
@@ -98,6 +113,58 @@ pub fn app_ui(
 
                                     if header
                                         .show(ui, |ui| {
+                                            ui.label("Model & Material:");
+
+                                            egui::ComboBox::from_id_source(format!(
+                                                "light_{}_model",
+                                                i
+                                            ))
+                                            .selected_text(light_manager.model_path())
+                                            .show_ui(
+                                                ui,
+                                                |ui| {
+                                                    for model_path in models.keys() {
+                                                        if ui
+                                                            .selectable_label(
+                                                                light_manager.model_path()
+                                                                    == model_path,
+                                                                model_path,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            light_manager
+                                                                .set_model_path(model_path.clone());
+                                                        }
+                                                    }
+                                                },
+                                            );
+
+                                            egui::ComboBox::from_id_source(format!(
+                                                "light_{}_material",
+                                                i
+                                            ))
+                                            .selected_text(light_manager.material_key())
+                                            .show_ui(
+                                                ui,
+                                                |ui| {
+                                                    for material_key in materials.keys() {
+                                                        if ui
+                                                            .selectable_label(
+                                                                light_manager.material_key()
+                                                                    == material_key,
+                                                                material_key,
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            light_manager.set_material_key(
+                                                                material_key.clone(),
+                                                            );
+                                                        }
+                                                    }
+                                                },
+                                            );
+
+                                            ui.separator();
                                             ui.label("Position:");
                                             let pos_changed = ui
                                                 .add(
@@ -212,6 +279,50 @@ pub fn app_ui(
                                 if header
                                     .show(ui, |ui| {
                                         ui.label(format!("Instances: {}", system.num_instances()));
+
+                                        ui.separator();
+
+                                        // Model and Material selection
+                                        ui.label("Model & Material:");
+
+                                        egui::ComboBox::from_id_source(format!("{}_model", name))
+                                            .selected_text(system.model_path())
+                                            .show_ui(ui, |ui| {
+                                                for model_path in models.keys() {
+                                                    if ui
+                                                        .selectable_label(
+                                                            system.model_path() == model_path,
+                                                            model_path,
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        system.set_model_path(model_path.clone());
+                                                    }
+                                                }
+                                            });
+
+                                        egui::ComboBox::from_id_source(format!(
+                                            "{}_material",
+                                            name
+                                        ))
+                                        .selected_text(system.material_key())
+                                        .show_ui(
+                                            ui,
+                                            |ui| {
+                                                for material_key in materials.keys() {
+                                                    if ui
+                                                        .selectable_label(
+                                                            system.material_key() == material_key,
+                                                            material_key,
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        system
+                                                            .set_material_key(material_key.clone());
+                                                    }
+                                                }
+                                            },
+                                        );
 
                                         ui.separator();
                                         ui.label("Generator:");
@@ -420,6 +531,25 @@ pub fn app_ui(
                         total_vertices
                     ));
                 }
+            });
+
+            ui.separator();
+
+            // Load Model
+            ui.collapsing("📦 Load Model", |ui| {
+                ui.label("Enter model path (e.g., 'teapot.obj'):");
+
+                ui.horizontal(|ui| {
+                    ui.text_edit_singleline(&mut ui_state.model_path_input);
+
+                    if ui.button("Load").clicked() && !ui_state.model_path_input.is_empty() {
+                        actions.model_to_load = Some(ui_state.model_path_input.clone());
+                        ui_state.model_path_input.clear();
+                    }
+                });
+
+                ui.label("Common models in res/:");
+                ui.label("• teapot.obj");
             });
 
             ui.separator();
