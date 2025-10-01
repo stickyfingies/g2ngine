@@ -1,7 +1,7 @@
+use crate::light::LightManager;
 use crate::particle_system::{
     GeneratorType, GridParams, ParticleSystem, ParticleSystemManager, SphereParams,
 };
-use crate::state::LightManager;
 use egui::{Align2, Context};
 
 pub struct UiState {

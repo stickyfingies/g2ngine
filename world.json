@@ -7,12 +7,12 @@
   ],
   "camera": {
     "position": [
-      -2.3330197,
+      -4.1144004,
       9.452521,
-      20.900764
+      23.6714
     ],
-    "yaw_deg": -88.250824,
-    "pitch_deg": -19.5306,
+    "yaw_deg": -82.76007,
+    "pitch_deg": -14.544714,
     "fovy_deg": 45.0,
     "znear": 0.1,
     "zfar": 1000.0
@@ -53,11 +53,11 @@
     {
       "name": "main",
       "model": "cube.obj",
-      "material_key": "cube/Material.001",
+      "material_key": "teapot/default",
       "generator": {
         "type": "grid",
         "rows": 30,
-        "spacing": 3.0,
+        "spacing": 5.1,
         "center": [
           0.0,
           0.0,
