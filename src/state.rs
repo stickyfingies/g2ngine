@@ -1,8 +1,7 @@
 use crate::egui::EguiRenderer;
 use crate::model::{self, DrawLight, ModelVertex, Vertex};
 use crate::particle_system::{
-    GridParticleSystem, InstanceRaw, ParticleSystemDesc, ParticleSystemManager,
-    SphereParticleSystem,
+    GeneratorType, InstanceRaw, ParticleSystem, ParticleSystemDesc, ParticleSystemManager,
 };
 use crate::scripting::ScriptEngine;
 use crate::texture::GpuTexture;
@@ -278,7 +277,6 @@ pub struct State {
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
     particle_system_manager: ParticleSystemManager,
-    particle_uniform_bind_group_layout: wgpu::BindGroupLayout,
     depth_texture: GpuTexture,
     window: Arc<Window>,
     clear_color: wgpu::Color,
@@ -465,21 +463,6 @@ impl State {
             }],
         });
 
-        let grid_transform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("grid_transform_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
         let shader_source = resources::load_string("shader.wgsl").await.unwrap();
         let shader = wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -493,7 +476,6 @@ impl State {
                     &texture_bind_group_layout,
                     &camera_bind_group_layout,
                     &light_bind_group_layout,
-                    &grid_transform_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -541,16 +523,15 @@ impl State {
             ParticleSystemDesc::Grid { params, .. } => params,
         };
 
-        let grid_system = GridParticleSystem::new(
+        let grid_system = ParticleSystem::new(
             &device,
             "main".to_string(),
-            params,
             "teapot.obj".to_string(),
             "teapot/default".to_string(),
-            &grid_transform_bind_group_layout,
+            GeneratorType::Grid(params),
         );
 
-        particle_system_manager.add_grid("main".to_string(), grid_system);
+        particle_system_manager.add("main".to_string(), grid_system);
 
         // Load initial model into HashMap
         let mut models = std::collections::HashMap::new();
@@ -595,7 +576,6 @@ impl State {
             light_buffer,
             light_bind_group,
             particle_system_manager,
-            particle_uniform_bind_group_layout: grid_transform_bind_group_layout,
             depth_texture,
             window,
             mouse_pressed: false,
@@ -774,15 +754,9 @@ impl State {
         }
 
         // Rebuild particle systems if needed (before render pass)
-        use crate::particle_system::ParticleSystemType;
-        for (_name, grid) in self.particle_system_manager.grids_mut() {
-            if grid.needs_rebuild() {
-                grid.rebuild(&self.device);
-            }
-        }
-        for (_name, sphere) in self.particle_system_manager.spheres_mut() {
-            if sphere.needs_rebuild() {
-                sphere.rebuild(&self.device);
+        for (_name, system) in self.particle_system_manager.systems_mut() {
+            if system.needs_rebuild() {
+                system.rebuild(&self.device);
             }
         }
 
@@ -824,12 +798,11 @@ impl State {
                 timestamp_writes: None,
             });
 
-            use crate::particle_system::ParticleSystemType;
             use model::DrawModel;
 
             // Render lights
             render_pass.set_pipeline(&self.light_render_pipeline);
-            if let (Some(light_model), Some(light_material)) = (
+            if let (Some(light_model), Some(_light_material)) = (
                 self.models.get(self.light_manager.model_path()),
                 self.materials.get(self.light_manager.material_key()),
             ) {
@@ -844,44 +817,21 @@ impl State {
                 }
             }
 
-            // Render particle systems - batched by type
+            // Render particle systems
             render_pass.set_pipeline(&self.render_pipeline);
 
-            // Batch 1: All grid systems
-            for (_name, grid) in self.particle_system_manager.grids() {
+            for (_name, system) in self.particle_system_manager.systems() {
                 if let (Some(model), Some(material)) = (
-                    self.models.get(grid.model_path()),
-                    self.materials.get(grid.material_key()),
+                    self.models.get(system.model_path()),
+                    self.materials.get(system.material_key()),
                 ) {
-                    render_pass.set_vertex_buffer(1, grid.instance_buffer().slice(..));
-                    render_pass.set_bind_group(3, grid.uniform_bind_group(), &[]);
+                    render_pass.set_vertex_buffer(1, system.instance_buffer().slice(..));
                     // Draw first mesh with specified material
                     if let Some(mesh) = model.meshes.first() {
                         render_pass.draw_mesh_instanced(
                             mesh,
                             material,
-                            0..grid.num_instances(),
-                            &self.camera_bind_group,
-                            &self.light_bind_group,
-                        );
-                    }
-                }
-            }
-
-            // Batch 2: All sphere systems (if any)
-            for (_name, sphere) in self.particle_system_manager.spheres() {
-                if let (Some(model), Some(material)) = (
-                    self.models.get(sphere.model_path()),
-                    self.materials.get(sphere.material_key()),
-                ) {
-                    render_pass.set_vertex_buffer(1, sphere.instance_buffer().slice(..));
-                    render_pass.set_bind_group(3, sphere.uniform_bind_group(), &[]);
-                    // Draw first mesh with specified material
-                    if let Some(mesh) = model.meshes.first() {
-                        render_pass.draw_mesh_instanced(
-                            mesh,
-                            material,
-                            0..sphere.num_instances(),
+                            0..system.num_instances(),
                             &self.camera_bind_group,
                             &self.light_bind_group,
                         );
@@ -917,7 +867,6 @@ impl State {
                     dt.as_millis() as f32,
                     queue,
                     &self.device,
-                    &self.particle_uniform_bind_group_layout,
                     &self.models,
                     &self.materials,
                 )
@@ -973,20 +922,12 @@ impl State {
 
         // Export particle systems
         let mut particle_systems = Vec::new();
-        for (name, grid) in self.particle_system_manager.grids() {
-            particle_systems.push(ParticleSystemData::Grid {
+        for (name, system) in self.particle_system_manager.systems() {
+            particle_systems.push(ParticleSystemData {
                 name: name.clone(),
-                params: grid.params().clone(),
-                model: grid.model_path().to_string(),
-                material_key: grid.material_key().to_string(),
-            });
-        }
-        for (name, sphere) in self.particle_system_manager.spheres() {
-            particle_systems.push(ParticleSystemData::Sphere {
-                name: name.clone(),
-                params: sphere.params().clone(),
-                model: sphere.model_path().to_string(),
-                material_key: sphere.material_key().to_string(),
+                model: system.model_path().to_string(),
+                material_key: system.material_key().to_string(),
+                generator: system.generator().clone(),
             });
         }
 
@@ -1053,40 +994,14 @@ impl State {
         // Load particle systems
         self.particle_system_manager = ParticleSystemManager::new();
         for ps_data in data.particle_systems {
-            match ps_data {
-                ParticleSystemData::Grid {
-                    name,
-                    params,
-                    model,
-                    material_key,
-                } => {
-                    let grid = GridParticleSystem::new(
-                        &self.device,
-                        name.clone(),
-                        params,
-                        model,
-                        material_key,
-                        &self.particle_uniform_bind_group_layout,
-                    );
-                    self.particle_system_manager.add_grid(name, grid);
-                }
-                ParticleSystemData::Sphere {
-                    name,
-                    params,
-                    model,
-                    material_key,
-                } => {
-                    let sphere = SphereParticleSystem::new(
-                        &self.device,
-                        name.clone(),
-                        params,
-                        model,
-                        material_key,
-                        &self.particle_uniform_bind_group_layout,
-                    );
-                    self.particle_system_manager.add_sphere(name, sphere);
-                }
-            }
+            let system = ParticleSystem::new(
+                &self.device,
+                ps_data.name.clone(),
+                ps_data.model,
+                ps_data.material_key,
+                ps_data.generator,
+            );
+            self.particle_system_manager.add(ps_data.name, system);
         }
 
         // Load background color

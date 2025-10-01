@@ -1,4 +1,4 @@
-use crate::particle_system::{GridParams, SphereParams};
+use crate::particle_system::GeneratorType;
 use serde::{Deserialize, Serialize};
 
 /// Serializable representation of the entire game world state
@@ -58,26 +58,13 @@ pub struct LightParams {
 
 /// Particle system configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ParticleSystemData {
-    #[serde(rename = "grid")]
-    Grid {
-        name: String,
-        params: GridParams,
-        #[serde(default = "default_model")]
-        model: String,
-        #[serde(default = "default_material_key")]
-        material_key: String,
-    },
-    #[serde(rename = "sphere")]
-    Sphere {
-        name: String,
-        params: SphereParams,
-        #[serde(default = "default_model")]
-        model: String,
-        #[serde(default = "default_material_key")]
-        material_key: String,
-    },
+pub struct ParticleSystemData {
+    pub name: String,
+    #[serde(default = "default_model")]
+    pub model: String,
+    #[serde(default = "default_material_key")]
+    pub material_key: String,
+    pub generator: GeneratorType,
 }
 
 fn default_model() -> String {
@@ -90,9 +77,6 @@ fn default_material_key() -> String {
 
 impl ParticleSystemData {
     pub fn name(&self) -> &str {
-        match self {
-            ParticleSystemData::Grid { name, .. } => name,
-            ParticleSystemData::Sphere { name, .. } => name,
-        }
+        &self.name
     }
 }

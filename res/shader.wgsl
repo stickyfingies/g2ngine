@@ -22,13 +22,6 @@ struct LightData {
 @group(2) @binding(0)
 var<uniform> light_data: LightData;
 
-struct GridTransform {
-    center: vec3<f32>,
-    spacing: f32,
-}
-@group(3) @binding(0)
-var<uniform> grid_transform: GridTransform;
-
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
@@ -69,23 +62,12 @@ fn vs_main(
         instance.normal_matrix_2
     );
 
-    // Apply grid transform (spacing + center) to instance position
-    // Extract base position from model matrix (translation component)
-    let base_position = vec3<f32>(model_matrix[3].x, model_matrix[3].y, model_matrix[3].z);
-    let transformed_position = base_position * grid_transform.spacing + grid_transform.center;
-
-    // Rebuild model matrix with transformed position
-    var transformed_model = model_matrix;
-    transformed_model[3].x = transformed_position.x;
-    transformed_model[3].y = transformed_position.y;
-    transformed_model[3].z = transformed_position.z;
-
     var out: VertexOutput;
     out.tex_coords = model.tex_coords;
     out.world_normal = normal_matrix * model.normal;
-    var world_position: vec4<f32> = transformed_model * vec4<f32>(model.position, 1.0);
+    var world_position: vec4<f32> = model_matrix * vec4<f32>(model.position, 1.0);
     out.world_position = world_position.xyz;
-    out.clip_position = camera.view_proj * transformed_model * vec4<f32>(model.position, 1.0);
+    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
     return out;
 }
 

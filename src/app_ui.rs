@@ -1,4 +1,6 @@
-use crate::particle_system::{ParticleSystemManager, ParticleSystemType};
+use crate::particle_system::{
+    GeneratorType, GridParams, ParticleSystem, ParticleSystemManager, SphereParams,
+};
 use crate::state::LightManager;
 use egui::{Align2, Context};
 
@@ -25,7 +27,6 @@ pub fn app_ui(
     delta_time_ms: f32,
     queue: &wgpu::Queue,
     device: &wgpu::Device,
-    particle_uniform_bind_group_layout: &wgpu::BindGroupLayout,
     models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
     materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::Material>>,
 ) -> UiActions {
@@ -164,259 +165,216 @@ pub fn app_ui(
                     ui.horizontal(|ui| {
                         if ui.button("➕ Add Grid").clicked() {
                             let name = format!("Grid_{}", particle_system_manager.count());
-                            let params = crate::particle_system::GridParams {
+                            let params = GridParams {
                                 rows: 10,
                                 spacing: 1.0,
                                 center: [0.0, 0.0, 0.0],
                             };
-                            let grid = crate::particle_system::GridParticleSystem::new(
+                            let system = ParticleSystem::new(
                                 device,
                                 name.clone(),
-                                params,
                                 "teapot.obj".to_string(),
                                 "teapot/default".to_string(),
-                                particle_uniform_bind_group_layout,
+                                GeneratorType::Grid(params),
                             );
-                            particle_system_manager.add_grid(name, grid);
+                            particle_system_manager.add(name, system);
                         }
 
                         if ui.button("➕ Add Sphere").clicked() {
                             let name = format!("Sphere_{}", particle_system_manager.count());
-                            let params = crate::particle_system::SphereParams {
+                            let params = SphereParams {
                                 count: 1000,
                                 radius: 5.0,
                                 center: [0.0, 0.0, 0.0],
                             };
-                            let sphere = crate::particle_system::SphereParticleSystem::new(
+                            let system = ParticleSystem::new(
                                 device,
                                 name.clone(),
-                                params,
                                 "teapot.obj".to_string(),
                                 "teapot/default".to_string(),
-                                particle_uniform_bind_group_layout,
+                                GeneratorType::Sphere(params),
                             );
-                            particle_system_manager.add_sphere(name, sphere);
+                            particle_system_manager.add(name, system);
                         }
                     });
 
                     ui.separator();
 
-                    // --- Grid Systems ---
-                    ui.label("Grid Systems:");
+                    // --- Particle Systems ---
+                    ui.label("Particle Systems:");
 
-                    let mut grid_to_remove = None;
-                    for (name, grid) in particle_system_manager.grids_mut() {
+                    let mut system_to_remove = None;
+                    for (name, system) in particle_system_manager.systems_mut() {
                         ui.push_id(name, |ui| {
                             ui.horizontal(|ui| {
                                 let header = egui::CollapsingHeader::new(name).default_open(false);
 
                                 if header
                                     .show(ui, |ui| {
-                                        ui.label(format!("Instances: {}", grid.num_instances()));
-
-                                        let mut params = grid.params().clone();
-                                        let mut params_changed = false;
-                                        let mut uniform_changed = false;
+                                        ui.label(format!("Instances: {}", system.num_instances()));
 
                                         ui.separator();
-                                        ui.label("Parameters:");
+                                        ui.label("Generator:");
 
-                                        ui.horizontal(|ui| {
-                                            ui.label("Rows:");
-                                            if ui
-                                                .add(egui::Slider::new(&mut params.rows, 5..=50))
-                                                .changed()
-                                            {
-                                                params_changed = true;
+                                        let mut params_changed = false;
+
+                                        match system.generator_mut() {
+                                            crate::particle_system::GeneratorType::Grid(params) => {
+                                                ui.label("Type: Grid");
+                                                ui.separator();
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label("Rows:");
+                                                    if ui
+                                                        .add(egui::Slider::new(
+                                                            &mut params.rows,
+                                                            5..=50,
+                                                        ))
+                                                        .changed()
+                                                    {
+                                                        params_changed = true;
+                                                    }
+                                                });
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label("Spacing:");
+                                                    if ui
+                                                        .add(egui::Slider::new(
+                                                            &mut params.spacing,
+                                                            0.5..=10.0,
+                                                        ))
+                                                        .changed()
+                                                    {
+                                                        params_changed = true;
+                                                    }
+                                                });
+
+                                                ui.label("Center:");
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(
+                                                            &mut params.center[0],
+                                                            -50.0..=50.0,
+                                                        )
+                                                        .text("X"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    params_changed = true;
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(
+                                                            &mut params.center[1],
+                                                            -50.0..=50.0,
+                                                        )
+                                                        .text("Y"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    params_changed = true;
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(
+                                                            &mut params.center[2],
+                                                            -50.0..=50.0,
+                                                        )
+                                                        .text("Z"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    params_changed = true;
+                                                }
                                             }
-                                        });
+                                            crate::particle_system::GeneratorType::Sphere(
+                                                params,
+                                            ) => {
+                                                ui.label("Type: Sphere");
+                                                ui.separator();
 
-                                        ui.horizontal(|ui| {
-                                            ui.label("Spacing:");
-                                            if ui
-                                                .add(egui::Slider::new(
-                                                    &mut params.spacing,
-                                                    0.5..=10.0,
-                                                ))
-                                                .changed()
-                                            {
-                                                params_changed = true;
-                                                uniform_changed = true;
+                                                ui.horizontal(|ui| {
+                                                    ui.label("Count:");
+                                                    if ui
+                                                        .add(egui::Slider::new(
+                                                            &mut params.count,
+                                                            100..=5000,
+                                                        ))
+                                                        .changed()
+                                                    {
+                                                        params_changed = true;
+                                                    }
+                                                });
+
+                                                ui.horizontal(|ui| {
+                                                    ui.label("Radius:");
+                                                    if ui
+                                                        .add(egui::Slider::new(
+                                                            &mut params.radius,
+                                                            1.0..=20.0,
+                                                        ))
+                                                        .changed()
+                                                    {
+                                                        params_changed = true;
+                                                    }
+                                                });
+
+                                                ui.label("Center:");
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(
+                                                            &mut params.center[0],
+                                                            -50.0..=50.0,
+                                                        )
+                                                        .text("X"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    params_changed = true;
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(
+                                                            &mut params.center[1],
+                                                            -50.0..=50.0,
+                                                        )
+                                                        .text("Y"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    params_changed = true;
+                                                }
+                                                if ui
+                                                    .add(
+                                                        egui::Slider::new(
+                                                            &mut params.center[2],
+                                                            -50.0..=50.0,
+                                                        )
+                                                        .text("Z"),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    params_changed = true;
+                                                }
                                             }
-                                        });
-
-                                        ui.label("Center:");
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(
-                                                    &mut params.center[0],
-                                                    -50.0..=50.0,
-                                                )
-                                                .text("X"),
-                                            )
-                                            .changed()
-                                        {
-                                            params_changed = true;
-                                            uniform_changed = true;
-                                        }
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(
-                                                    &mut params.center[1],
-                                                    -50.0..=50.0,
-                                                )
-                                                .text("Y"),
-                                            )
-                                            .changed()
-                                        {
-                                            params_changed = true;
-                                            uniform_changed = true;
-                                        }
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(
-                                                    &mut params.center[2],
-                                                    -50.0..=50.0,
-                                                )
-                                                .text("Z"),
-                                            )
-                                            .changed()
-                                        {
-                                            params_changed = true;
-                                            uniform_changed = true;
                                         }
 
                                         if params_changed {
-                                            grid.update_params(params);
-                                            if uniform_changed {
-                                                grid.update_uniform(queue);
-                                            }
+                                            system.mark_dirty();
                                         }
                                     })
                                     .body_returned
                                     .is_some()
                                 {
                                     if ui.button("🗑").clicked() {
-                                        grid_to_remove = Some(name.clone());
+                                        system_to_remove = Some(name.clone());
                                     }
                                 }
                             });
                         });
                     }
 
-                    if let Some(name) = grid_to_remove {
-                        particle_system_manager.remove(&name);
-                    }
-
-                    ui.separator();
-
-                    // --- Sphere Systems ---
-                    ui.label("Sphere Systems:");
-
-                    let mut sphere_to_remove = None;
-                    for (name, sphere) in particle_system_manager.spheres_mut() {
-                        ui.push_id(name, |ui| {
-                            ui.horizontal(|ui| {
-                                let header = egui::CollapsingHeader::new(name).default_open(false);
-
-                                if header
-                                    .show(ui, |ui| {
-                                        ui.label(format!("Instances: {}", sphere.num_instances()));
-
-                                        let mut params = sphere.params().clone();
-                                        let mut params_changed = false;
-                                        let mut uniform_changed = false;
-
-                                        ui.separator();
-                                        ui.label("Parameters:");
-
-                                        ui.horizontal(|ui| {
-                                            ui.label("Count:");
-                                            if ui
-                                                .add(egui::Slider::new(
-                                                    &mut params.count,
-                                                    100..=5000,
-                                                ))
-                                                .changed()
-                                            {
-                                                params_changed = true;
-                                            }
-                                        });
-
-                                        ui.horizontal(|ui| {
-                                            ui.label("Radius:");
-                                            if ui
-                                                .add(egui::Slider::new(
-                                                    &mut params.radius,
-                                                    1.0..=20.0,
-                                                ))
-                                                .changed()
-                                            {
-                                                params_changed = true;
-                                                uniform_changed = true;
-                                            }
-                                        });
-
-                                        ui.label("Center:");
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(
-                                                    &mut params.center[0],
-                                                    -50.0..=50.0,
-                                                )
-                                                .text("X"),
-                                            )
-                                            .changed()
-                                        {
-                                            params_changed = true;
-                                            uniform_changed = true;
-                                        }
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(
-                                                    &mut params.center[1],
-                                                    -50.0..=50.0,
-                                                )
-                                                .text("Y"),
-                                            )
-                                            .changed()
-                                        {
-                                            params_changed = true;
-                                            uniform_changed = true;
-                                        }
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(
-                                                    &mut params.center[2],
-                                                    -50.0..=50.0,
-                                                )
-                                                .text("Z"),
-                                            )
-                                            .changed()
-                                        {
-                                            params_changed = true;
-                                            uniform_changed = true;
-                                        }
-
-                                        if params_changed {
-                                            sphere.update_params(params);
-                                            if uniform_changed {
-                                                sphere.update_uniform(queue);
-                                            }
-                                        }
-                                    })
-                                    .body_returned
-                                    .is_some()
-                                {
-                                    if ui.button("🗑").clicked() {
-                                        sphere_to_remove = Some(name.clone());
-                                    }
-                                }
-                            });
-                        });
-                    }
-
-                    if let Some(name) = sphere_to_remove {
+                    if let Some(name) = system_to_remove {
                         particle_system_manager.remove(&name);
                     }
                 },
@@ -452,7 +410,7 @@ pub fn app_ui(
 
             // Geometries Inspection
             ui.collapsing(format!("🔷 Geometries ({})", models.len()), |ui| {
-                for (path, model) in models.iter() {
+                for (_path, model) in models.iter() {
                     let total_vertices: u32 = model.meshes.iter().map(|m| m.vertex_count).sum();
                     ui.label(format!(
                         "• {} ({} mesh{}, {} vertices)",

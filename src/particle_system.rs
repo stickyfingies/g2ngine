@@ -63,6 +63,10 @@ impl InstanceRaw {
     }
 }
 
+// ============================================================================
+// GENERATOR PARAMETERS
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GridParams {
     pub rows: usize,
@@ -70,13 +74,20 @@ pub struct GridParams {
     pub center: [f32; 3],
 }
 
-// GPU uniform for grid transform (spacing + center)
-// Organized to minimize padding: vec3 + f32 = 16 bytes (single vec4)
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GridTransformUniform {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SphereParams {
+    pub count: usize,
+    pub radius: f32,
     pub center: [f32; 3],
-    pub spacing: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum GeneratorType {
+    #[serde(rename = "grid")]
+    Grid(GridParams),
+    #[serde(rename = "sphere")]
+    Sphere(SphereParams),
 }
 
 /// This is used by demo.js to return a description of the original starting particle system.
@@ -87,120 +98,81 @@ pub enum ParticleSystemDesc {
     Grid { count: usize, params: GridParams },
 }
 
-/// Common interface for all particle system types
-pub trait ParticleSystemType {
-    /// Get the name of this system
-    fn name(&self) -> &str;
-
-    /// Get the number of instances to render
-    fn num_instances(&self) -> u32;
-
-    /// Get the instance buffer
-    fn instance_buffer(&self) -> &wgpu::Buffer;
-
-    /// Get the bind group for type-specific uniforms
-    fn uniform_bind_group(&self) -> &wgpu::BindGroup;
-
-    /// Update GPU uniform buffer if parameters changed
-    fn update_uniform(&self, queue: &wgpu::Queue);
-
-    /// Check if this system needs instance buffer rebuild
-    fn needs_rebuild(&self) -> bool;
-
-    /// Rebuild instance buffer
-    fn rebuild(&mut self, device: &wgpu::Device);
-
-    /// Mark as needing rebuild
-    fn mark_dirty(&mut self);
-}
-
 // ============================================================================
-// GRID PARTICLE SYSTEM
+// UNIFIED PARTICLE SYSTEM
 // ============================================================================
 
-pub struct GridParticleSystem {
+pub struct ParticleSystem {
     name: String,
-    params: GridParams,
     model_path: String,
     material_key: String,
+    generator: GeneratorType,
     instance_buffer: wgpu::Buffer,
     num_instances: u32,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
     needs_rebuild: bool,
     last_edit_time: web_time::Instant,
 }
 
-impl GridParticleSystem {
+impl ParticleSystem {
     pub fn new(
         device: &wgpu::Device,
         name: String,
-        params: GridParams,
         model_path: String,
         material_key: String,
-        bind_group_layout: &wgpu::BindGroupLayout,
+        generator: GeneratorType,
     ) -> Self {
-        let count = params.rows * params.rows;
-        let instances = Self::generate_grid_instances(count, &params);
+        let instances = Self::generate_instances(&generator);
 
         let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Grid System '{}' Instance Buffer", name)),
+            label: Some(&format!("Particle System '{}' Instance Buffer", name)),
             contents: bytemuck::cast_slice(&instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let uniform = GridTransformUniform {
-            center: params.center,
-            spacing: params.spacing,
-        };
-
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Grid System '{}' Uniform Buffer", name)),
-            contents: bytemuck::cast_slice(&[uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("Grid System '{}' Bind Group", name)),
-            layout: bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
         Self {
             name,
-            params,
             model_path,
             material_key,
+            generator,
             instance_buffer,
             num_instances: instances.len() as u32,
-            uniform_buffer,
-            bind_group,
             needs_rebuild: false,
             last_edit_time: web_time::Instant::now(),
         }
     }
 
-    fn generate_grid_instances(count: usize, params: &GridParams) -> Vec<InstanceRaw> {
+    fn generate_instances(generator: &GeneratorType) -> Vec<InstanceRaw> {
+        match generator {
+            GeneratorType::Grid(params) => Self::generate_grid_instances(params),
+            GeneratorType::Sphere(params) => Self::generate_sphere_instances(params),
+        }
+    }
+
+    fn generate_grid_instances(params: &GridParams) -> Vec<InstanceRaw> {
+        let count = params.rows * params.rows;
         let rows = params.rows;
         let displacement = Vector3::new(rows as f32 * 0.5, 0.0, rows as f32 * 0.5);
+        let center = Vector3::new(params.center[0], params.center[1], params.center[2]);
 
         let mut instances = Vec::with_capacity(count);
 
         for x in 0..rows {
             for z in 0..rows {
-                let position = Vector3::new(x as f32, 0.0, z as f32) - displacement;
+                // Compute grid position
+                let grid_position = Vector3::new(x as f32, 0.0, z as f32) - displacement;
 
-                let rotation = if position.magnitude2() < 0.001 {
+                // Apply spacing and center to get world position (fully on CPU now)
+                let world_position = grid_position * params.spacing + center;
+
+                let rotation = if grid_position.magnitude2() < 0.001 {
                     Quaternion::new(1.0, 0.0, 0.0, 0.0)
                 } else {
-                    let axis = position.normalize();
+                    let axis = grid_position.normalize();
                     Quaternion::from_axis_angle(axis, cgmath::Rad(std::f32::consts::PI / 4.0))
                 };
 
-                let model_matrix = Matrix4::from_translation(position) * Matrix4::from(rotation);
+                let model_matrix =
+                    Matrix4::from_translation(world_position) * Matrix4::from(rotation);
                 let normal_matrix = Matrix3::from(rotation);
 
                 instances.push(InstanceRaw {
@@ -220,161 +192,9 @@ impl GridParticleSystem {
         instances
     }
 
-    pub fn params(&self) -> &GridParams {
-        &self.params
-    }
-
-    pub fn model_path(&self) -> &str {
-        &self.model_path
-    }
-
-    pub fn material_key(&self) -> &str {
-        &self.material_key
-    }
-
-    pub fn update_params(&mut self, params: GridParams) {
-        let old_rows = self.params.rows;
-        self.params = params;
-
-        if old_rows != self.params.rows {
-            self.mark_dirty();
-        }
-    }
-}
-
-impl ParticleSystemType for GridParticleSystem {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn num_instances(&self) -> u32 {
-        self.num_instances
-    }
-
-    fn instance_buffer(&self) -> &wgpu::Buffer {
-        &self.instance_buffer
-    }
-
-    fn uniform_bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
-
-    fn update_uniform(&self, queue: &wgpu::Queue) {
-        let uniform = GridTransformUniform {
-            center: self.params.center,
-            spacing: self.params.spacing,
-        };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniform]));
-    }
-
-    fn needs_rebuild(&self) -> bool {
-        self.needs_rebuild && self.last_edit_time.elapsed().as_millis() >= DEBOUNCE_MS as u128
-    }
-
-    fn rebuild(&mut self, device: &wgpu::Device) {
-        let count = self.params.rows * self.params.rows;
-        let instances = Self::generate_grid_instances(count, &self.params);
-        self.num_instances = instances.len() as u32;
-
-        self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Grid System '{}' Instance Buffer", self.name)),
-            contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        self.needs_rebuild = false;
-    }
-
-    fn mark_dirty(&mut self) {
-        self.needs_rebuild = true;
-        self.last_edit_time = web_time::Instant::now();
-    }
-}
-
-// ============================================================================
-// SPHERE PARTICLE SYSTEM
-// ============================================================================
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SphereParams {
-    pub count: usize,
-    pub radius: f32,
-    pub center: [f32; 3],
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct SphereTransformUniform {
-    pub center: [f32; 3],
-    pub radius: f32,
-}
-
-pub struct SphereParticleSystem {
-    name: String,
-    params: SphereParams,
-    model_path: String,
-    material_key: String,
-    instance_buffer: wgpu::Buffer,
-    num_instances: u32,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    needs_rebuild: bool,
-    last_edit_time: web_time::Instant,
-}
-
-impl SphereParticleSystem {
-    pub fn new(
-        device: &wgpu::Device,
-        name: String,
-        params: SphereParams,
-        model_path: String,
-        material_key: String,
-        bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> Self {
-        let instances = Self::generate_sphere_instances(&params);
-
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Sphere System '{}' Instance Buffer", name)),
-            contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let uniform = SphereTransformUniform {
-            center: params.center,
-            radius: params.radius,
-        };
-
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Sphere System '{}' Uniform Buffer", name)),
-            contents: bytemuck::cast_slice(&[uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("Sphere System '{}' Bind Group", name)),
-            layout: bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
-
-        Self {
-            name,
-            params,
-            model_path,
-            material_key,
-            instance_buffer,
-            num_instances: instances.len() as u32,
-            uniform_buffer,
-            bind_group,
-            needs_rebuild: false,
-            last_edit_time: web_time::Instant::now(),
-        }
-    }
-
     fn generate_sphere_instances(params: &SphereParams) -> Vec<InstanceRaw> {
         let count = params.count;
+        let center = Vector3::new(params.center[0], params.center[1], params.center[2]);
         let mut instances = Vec::with_capacity(count);
 
         // Golden spiral / Fibonacci sphere distribution
@@ -390,12 +210,15 @@ impl SphereParticleSystem {
             let y = inclination.sin() * azimuth.sin();
             let z = inclination.cos();
 
-            let position = Vector3::new(x, y, z); // Unit sphere, shader will scale
+            let unit_position = Vector3::new(x, y, z);
+
+            // Apply radius and center to get world position (fully on CPU now)
+            let world_position = unit_position * params.radius + center;
 
             // Rotation to face outward from center
             let up = Vector3::new(0.0, 1.0, 0.0);
-            let rotation = if position.magnitude2() > 0.001 {
-                let forward = position.normalize();
+            let rotation = if unit_position.magnitude2() > 0.001 {
+                let forward = unit_position.normalize();
                 let right = forward.cross(up).normalize();
                 let new_up = right.cross(forward);
 
@@ -404,7 +227,7 @@ impl SphereParticleSystem {
                 Quaternion::new(1.0, 0.0, 0.0, 0.0)
             };
 
-            let model_matrix = Matrix4::from_translation(position) * Matrix4::from(rotation);
+            let model_matrix = Matrix4::from_translation(world_position) * Matrix4::from(rotation);
             let normal_matrix = Matrix3::from(rotation);
 
             instances.push(InstanceRaw {
@@ -416,63 +239,57 @@ impl SphereParticleSystem {
         instances
     }
 
-    pub fn params(&self) -> &SphereParams {
-        &self.params
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn model_path(&self) -> &str {
         &self.model_path
     }
 
+    pub fn set_model_path(&mut self, path: String) {
+        self.model_path = path;
+    }
+
     pub fn material_key(&self) -> &str {
         &self.material_key
     }
 
-    pub fn update_params(&mut self, params: SphereParams) {
-        let old_count = self.params.count;
-        self.params = params;
-
-        if old_count != self.params.count {
-            self.mark_dirty();
-        }
-    }
-}
-
-impl ParticleSystemType for SphereParticleSystem {
-    fn name(&self) -> &str {
-        &self.name
+    pub fn set_material_key(&mut self, key: String) {
+        self.material_key = key;
     }
 
-    fn num_instances(&self) -> u32 {
+    pub fn generator(&self) -> &GeneratorType {
+        &self.generator
+    }
+
+    pub fn generator_mut(&mut self) -> &mut GeneratorType {
+        &mut self.generator
+    }
+
+    pub fn set_generator(&mut self, generator: GeneratorType) {
+        self.generator = generator;
+        self.mark_dirty();
+    }
+
+    pub fn num_instances(&self) -> u32 {
         self.num_instances
     }
 
-    fn instance_buffer(&self) -> &wgpu::Buffer {
+    pub fn instance_buffer(&self) -> &wgpu::Buffer {
         &self.instance_buffer
     }
 
-    fn uniform_bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
-
-    fn update_uniform(&self, queue: &wgpu::Queue) {
-        let uniform = SphereTransformUniform {
-            center: self.params.center,
-            radius: self.params.radius,
-        };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniform]));
-    }
-
-    fn needs_rebuild(&self) -> bool {
+    pub fn needs_rebuild(&self) -> bool {
         self.needs_rebuild && self.last_edit_time.elapsed().as_millis() >= DEBOUNCE_MS as u128
     }
 
-    fn rebuild(&mut self, device: &wgpu::Device) {
-        let instances = Self::generate_sphere_instances(&self.params);
+    pub fn rebuild(&mut self, device: &wgpu::Device) {
+        let instances = Self::generate_instances(&self.generator);
         self.num_instances = instances.len() as u32;
 
         self.instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Sphere System '{}' Instance Buffer", self.name)),
+            label: Some(&format!("Particle System '{}' Instance Buffer", self.name)),
             contents: bytemuck::cast_slice(&instances),
             usage: wgpu::BufferUsages::VERTEX,
         });
@@ -480,7 +297,7 @@ impl ParticleSystemType for SphereParticleSystem {
         self.needs_rebuild = false;
     }
 
-    fn mark_dirty(&mut self) {
+    pub fn mark_dirty(&mut self) {
         self.needs_rebuild = true;
         self.last_edit_time = web_time::Instant::now();
     }
@@ -490,91 +307,42 @@ impl ParticleSystemType for SphereParticleSystem {
 // PARTICLE SYSTEM MANAGER
 // ============================================================================
 
-#[derive(Copy, Clone, Debug)]
-pub enum ParticleSystemKind {
-    Grid,
-    Sphere,
-}
-
 pub struct ParticleSystemManager {
-    grids: HashMap<String, GridParticleSystem>,
-    spheres: HashMap<String, SphereParticleSystem>,
-    name_to_kind: HashMap<String, ParticleSystemKind>,
+    systems: HashMap<String, ParticleSystem>,
 }
 
 impl ParticleSystemManager {
     pub fn new() -> Self {
         Self {
-            grids: HashMap::new(),
-            spheres: HashMap::new(),
-            name_to_kind: HashMap::new(),
+            systems: HashMap::new(),
         }
     }
 
-    pub fn add_grid(&mut self, name: String, system: GridParticleSystem) {
-        self.name_to_kind
-            .insert(name.clone(), ParticleSystemKind::Grid);
-        self.grids.insert(name, system);
-    }
-
-    pub fn add_sphere(&mut self, name: String, system: SphereParticleSystem) {
-        self.name_to_kind
-            .insert(name.clone(), ParticleSystemKind::Sphere);
-        self.spheres.insert(name, system);
+    pub fn add(&mut self, name: String, system: ParticleSystem) {
+        self.systems.insert(name, system);
     }
 
     pub fn remove(&mut self, name: &str) -> bool {
-        if let Some(kind) = self.name_to_kind.remove(name) {
-            match kind {
-                ParticleSystemKind::Grid => self.grids.remove(name).is_some(),
-                ParticleSystemKind::Sphere => self.spheres.remove(name).is_some(),
-            }
-        } else {
-            false
-        }
+        self.systems.remove(name).is_some()
     }
 
-    pub fn get_kind(&self, name: &str) -> Option<ParticleSystemKind> {
-        self.name_to_kind.get(name).copied()
+    pub fn get(&self, name: &str) -> Option<&ParticleSystem> {
+        self.systems.get(name)
     }
 
-    pub fn get_grid(&self, name: &str) -> Option<&GridParticleSystem> {
-        self.grids.get(name)
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut ParticleSystem> {
+        self.systems.get_mut(name)
     }
 
-    pub fn get_grid_mut(&mut self, name: &str) -> Option<&mut GridParticleSystem> {
-        self.grids.get_mut(name)
+    pub fn systems(&self) -> impl Iterator<Item = (&String, &ParticleSystem)> {
+        self.systems.iter()
     }
 
-    pub fn get_sphere(&self, name: &str) -> Option<&SphereParticleSystem> {
-        self.spheres.get(name)
-    }
-
-    pub fn get_sphere_mut(&mut self, name: &str) -> Option<&mut SphereParticleSystem> {
-        self.spheres.get_mut(name)
-    }
-
-    pub fn grids(&self) -> impl Iterator<Item = (&String, &GridParticleSystem)> {
-        self.grids.iter()
-    }
-
-    pub fn grids_mut(&mut self) -> impl Iterator<Item = (&String, &mut GridParticleSystem)> {
-        self.grids.iter_mut()
-    }
-
-    pub fn spheres(&self) -> impl Iterator<Item = (&String, &SphereParticleSystem)> {
-        self.spheres.iter()
-    }
-
-    pub fn spheres_mut(&mut self) -> impl Iterator<Item = (&String, &mut SphereParticleSystem)> {
-        self.spheres.iter_mut()
-    }
-
-    pub fn all_names(&self) -> impl Iterator<Item = &String> {
-        self.name_to_kind.keys()
+    pub fn systems_mut(&mut self) -> impl Iterator<Item = (&String, &mut ParticleSystem)> {
+        self.systems.iter_mut()
     }
 
     pub fn count(&self) -> usize {
-        self.grids.len() + self.spheres.len()
+        self.systems.len()
     }
 }
