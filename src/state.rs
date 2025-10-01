@@ -9,6 +9,8 @@ use crate::world::{CameraData, LightParams, ParticleSystemData, WorldData};
 use crate::{camera, resources};
 use cgmath::{Deg, Matrix4, Point3, Rad};
 use egui_wgpu::ScreenDescriptor;
+use std::collections::HashSet;
+use std::sync::mpsc;
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
@@ -290,11 +292,25 @@ pub struct State {
     elapsed_time: f32,
     pending_model_loads: Vec<String>,
     ui_state: crate::app_ui::UiState,
+    loaded_model_receiver: mpsc::Receiver<(
+        String,
+        model::Model,
+        std::collections::HashMap<String, model::Material>,
+    )>,
+    #[cfg(target_arch = "wasm32")]
+    loaded_model_sender: mpsc::Sender<(
+        String,
+        model::Model,
+        std::collections::HashMap<String, model::Material>,
+    )>,
 }
 
 impl State {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
+
+        // Create channel for async model loading (used on web)
+        let (loaded_model_sender, loaded_model_receiver) = mpsc::channel();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
@@ -594,6 +610,9 @@ impl State {
             elapsed_time: 0.0,
             pending_model_loads: Vec::new(),
             ui_state: crate::app_ui::UiState::default(),
+            loaded_model_receiver,
+            #[cfg(target_arch = "wasm32")]
+            loaded_model_sender,
         })
     }
 
@@ -702,6 +721,20 @@ impl State {
             self.light_manager.clear_dirty();
         }
 
+        // Poll channel for loaded models (from async web tasks)
+        while let Ok((path, loaded_model, materials)) = self.loaded_model_receiver.try_recv() {
+            log::info!("Registering loaded model: {}", path);
+
+            // Register materials
+            for (key, material) in materials {
+                self.materials.insert(key, Arc::new(material));
+            }
+
+            // Register model
+            self.models.insert(path.clone(), Arc::new(loaded_model));
+            log::info!("Model '{}' registered successfully", path);
+        }
+
         // Process pending model loads
         if !self.pending_model_loads.is_empty() {
             let paths_to_load = std::mem::take(&mut self.pending_model_loads);
@@ -741,23 +774,23 @@ impl State {
 
                 #[cfg(target_arch = "wasm32")]
                 {
-                    // Web: spawn async task
-                    // We need to move required data into the closure
+                    // Web: spawn async task and send result through channel
                     let device = self.device.clone();
                     let queue = self.queue.clone();
                     let texture_bind_group_layout = self.texture_bind_group_layout.clone();
-
-                    // Note: We can't easily update self.models/materials from the spawned task
-                    // This would require Arc<Mutex<>> or channels. For now, log a warning.
-                    log::warn!("Web model loading spawned - model won't be immediately available");
+                    let sender = self.loaded_model_sender.clone();
 
                     wasm_bindgen_futures::spawn_local(async move {
                         match model::load_model(&path, &device, &queue, &texture_bind_group_layout)
                             .await
                         {
-                            Ok(_) => {
-                                log::info!("Model '{}' loaded (but not yet registered)", path);
-                                // TODO: Send loaded model back via channel
+                            Ok((loaded_model, materials)) => {
+                                log::info!("Model '{}' loaded, sending to main thread", path);
+                                // Send loaded model through channel
+                                if let Err(e) = sender.send((path.clone(), loaded_model, materials))
+                                {
+                                    log::error!("Failed to send loaded model '{}': {}", path, e);
+                                }
                             }
                             Err(e) => {
                                 log::error!("Failed to load model '{}': {}", path, e);
@@ -1023,6 +1056,21 @@ impl State {
 
     /// Load world state from serialized data
     pub fn load_world(&mut self, data: WorldData) {
+        // Pre-load all models required by the world
+        let mut required_models = std::collections::HashSet::new();
+        for light_data in &data.lights {
+            required_models.insert(light_data.model.clone());
+        }
+        for ps_data in &data.particle_systems {
+            required_models.insert(ps_data.model.clone());
+        }
+
+        for model_path in required_models {
+            if !self.models.contains_key(&model_path) {
+                self.pending_model_loads.push(model_path);
+            }
+        }
+
         // Load camera
         self.camera = camera::Camera::new(
             Point3::new(
