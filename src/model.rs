@@ -3,6 +3,7 @@ use crate::{
     texture::{self, GpuTexture},
 };
 use std::{
+    cell::RefCell,
     io::{BufReader, Cursor},
     ops::Range,
 };
@@ -55,10 +56,26 @@ pub struct Model {
     pub material_keys: Vec<String>,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MaterialProperties {
+    pub color: [f32; 4],
+}
+
+impl Default for MaterialProperties {
+    fn default() -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0, 1.0], // Default to white (no tint)
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub struct Material {
     pub name: String,
     pub diffuse_texture: texture::GpuTexture,
+    pub properties_buffer: wgpu::Buffer,
+    pub properties: RefCell<MaterialProperties>,
     pub bind_group: wgpu::BindGroup,
 }
 
@@ -116,6 +133,13 @@ pub async fn load_model(
             diffuse_texture_filename,
         )?;
 
+        let properties = MaterialProperties::default();
+        let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{}_properties", mat.name)),
+            contents: bytemuck::cast_slice(&[properties]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(mat.name.as_str()),
             layout,
@@ -128,6 +152,10 @@ pub async fn load_model(
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: properties_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -136,6 +164,8 @@ pub async fn load_model(
             Material {
                 name: mat.name,
                 diffuse_texture,
+                properties_buffer,
+                properties: RefCell::new(properties),
                 bind_group,
             },
         );

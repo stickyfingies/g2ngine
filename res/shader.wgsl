@@ -73,14 +73,21 @@ fn vs_main(
 
 // Fragment shader
 
+struct MaterialProperties {
+    color: vec4<f32>,
+}
+
 @group(1) @binding(0)
 var t_diffuse: texture_2d<f32>;
 @group(1) @binding(1)
 var s_diffuse: sampler;
+@group(1) @binding(2)
+var<uniform> material_properties: MaterialProperties;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let texture_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let object_color: vec4<f32> = texture_color * material_properties.color;
     let view_dir = normalize(camera.view_pos.xyz - in.world_position);
 
     var total_light = vec3<f32>(0.0, 0.0, 0.0);

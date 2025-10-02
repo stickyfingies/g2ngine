@@ -20,6 +20,7 @@ pub struct UiActions {
     pub save_requested: bool,
     pub load_requested: bool,
     pub model_to_load: Option<String>,
+    pub material_color_changed: Option<(String, [f32; 4])>,
 }
 
 impl Default for UiActions {
@@ -28,6 +29,7 @@ impl Default for UiActions {
             save_requested: false,
             load_requested: false,
             model_to_load: None,
+            material_color_changed: None,
         }
     }
 }
@@ -553,10 +555,22 @@ pub fn app_ui(
 
             ui.separator();
 
-            // Materials Inspection
+            // Materials Inspection & Editing
             ui.collapsing(format!("🎨 Materials ({})", materials.len()), |ui| {
                 for (key, material) in materials.iter() {
-                    ui.label(format!("• {} (texture: {})", material.name, key));
+                    ui.push_id(key, |ui| {
+                        ui.collapsing(&material.name, |ui| {
+                            ui.label(format!("Key: {}", key));
+                            ui.separator();
+
+                            // Color picker
+                            ui.label("Tint Color:");
+                            let mut color = material.properties.borrow().color;
+                            if ui.color_edit_button_rgba_unmultiplied(&mut color).changed() {
+                                actions.material_color_changed = Some((key.clone(), color));
+                            }
+                        });
+                    });
                 }
             });
 

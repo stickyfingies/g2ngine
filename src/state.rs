@@ -266,6 +266,16 @@ impl State {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
                 label: Some("texture_bind_group_layout"),
             });
@@ -416,6 +426,13 @@ impl State {
             let diffuse_texture =
                 GpuTexture::from_bytes(&device, &queue, &diffuse_texture_bytes, "white.png")?;
 
+            let properties = model::MaterialProperties::default();
+            let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("default_material_properties"),
+                contents: bytemuck::cast_slice(&[properties]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("default_material_bind_group"),
                 layout: &texture_bind_group_layout,
@@ -428,12 +445,18 @@ impl State {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: properties_buffer.as_entire_binding(),
+                    },
                 ],
             });
 
             model::Material {
                 name: "default".to_string(),
                 diffuse_texture,
+                properties_buffer,
+                properties: std::cell::RefCell::new(properties),
                 bind_group,
             }
         };
@@ -920,6 +943,16 @@ impl State {
         }
         if let Some(model_path) = ui_actions.model_to_load {
             self.pending_model_loads.insert(model_path);
+        }
+        if let Some((material_key, color)) = ui_actions.material_color_changed {
+            if let Some(material) = self.materials.get(&material_key) {
+                material.properties.borrow_mut().color = color;
+                self.queue.write_buffer(
+                    &material.properties_buffer,
+                    0,
+                    bytemuck::cast_slice(&[*material.properties.borrow()]),
+                );
+            }
         }
 
         self.queue.submit(iter::once(encoder.finish()));
