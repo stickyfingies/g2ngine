@@ -241,7 +241,7 @@ pub fn app_ui(
                                 device,
                                 name.clone(),
                                 "teapot.obj".to_string(),
-                                "teapot/default".to_string(),
+                                "default".to_string(),
                                 GeneratorType::Grid(params),
                             );
                             particle_system_manager.add(name, system);
@@ -258,7 +258,7 @@ pub fn app_ui(
                                 device,
                                 name.clone(),
                                 "teapot.obj".to_string(),
-                                "teapot/default".to_string(),
+                                "default".to_string(),
                                 GeneratorType::Sphere(params),
                             );
                             particle_system_manager.add(name, system);

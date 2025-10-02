@@ -72,7 +72,7 @@ fn default_model() -> String {
 }
 
 fn default_material_key() -> String {
-    "teapot/default".to_string()
+    "default".to_string()
 }
 
 impl ParticleSystemData {

@@ -142,37 +142,9 @@ pub async fn load_model(
         material_keys.push(material_key);
     }
 
-    // If no materials were loaded, create a default white material
+    // If no materials were loaded, use the default material
     if materials_map.is_empty() {
-        let material_key = format!("{}/default", model_name);
-        let diffuse_texture_bytes = load_binary("white.png").await?;
-        let diffuse_texture =
-            GpuTexture::from_bytes(device, queue, &diffuse_texture_bytes, "white.png")?;
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("default_material"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-            ],
-        });
-
-        materials_map.insert(
-            material_key.clone(),
-            Material {
-                name: "default".to_string(),
-                diffuse_texture,
-                bind_group,
-            },
-        );
-        material_keys.push(material_key);
+        material_keys.push("default".to_string());
     }
 
     let meshes = models
@@ -220,11 +192,13 @@ pub async fn load_model(
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-            let material_index = model.mesh.material_id.unwrap_or(0);
-            let material_key = material_keys
-                .get(material_index)
-                .cloned()
-                .unwrap_or_else(|| material_keys[0].clone());
+            let material_key = match model.mesh.material_id {
+                Some(material_index) => material_keys
+                    .get(material_index)
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string()),
+                None => "default".to_string(),
+            };
 
             Mesh {
                 name: file_name.to_string(),

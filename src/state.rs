@@ -399,19 +399,48 @@ impl State {
         let grid_system = ParticleSystem::new(
             &device,
             "main".to_string(),
-            "teapot.obj".to_string(),
-            "teapot/default".to_string(),
+            "cube.obj".to_string(),
+            "default".to_string(),
             GeneratorType::Grid(params),
         );
 
         particle_system_manager.add("main".to_string(), grid_system);
 
+        // Create default material
+        let mut materials = std::collections::HashMap::new();
+        let default_material = {
+            let diffuse_texture_bytes = resources::load_binary("white.png").await?;
+            let diffuse_texture =
+                GpuTexture::from_bytes(&device, &queue, &diffuse_texture_bytes, "white.png")?;
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("default_material_bind_group"),
+                layout: &texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                    },
+                ],
+            });
+
+            model::Material {
+                name: "default".to_string(),
+                diffuse_texture,
+                bind_group,
+            }
+        };
+        materials.insert("default".to_string(), Arc::new(default_material));
+
         // Load initial model into HashMap
         let mut models = std::collections::HashMap::new();
-        let mut materials = std::collections::HashMap::new();
 
         let (teapot_model, teapot_materials) =
-            model::load_model("teapot.obj", &device, &queue, &texture_bind_group_layout)
+            model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
                 .await
                 .unwrap();
 
@@ -420,7 +449,7 @@ impl State {
             materials.insert(key, Arc::new(material));
         }
 
-        models.insert("teapot.obj".to_string(), Arc::new(teapot_model));
+        models.insert("cube.obj".to_string(), Arc::new(teapot_model));
 
         let egui_renderer = EguiRenderer::new(
             &device,
