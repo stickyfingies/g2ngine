@@ -1,6 +1,6 @@
 use crate::{
     resources::{load_binary, load_string},
-    texture::{self, GpuTexture},
+    texture::GpuTexture,
 };
 use std::{
     cell::RefCell,
@@ -87,9 +87,6 @@ pub struct GpuMaterial {
     pub properties_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
-
-// Type alias for backwards compatibility during transition
-pub type Material = GpuMaterial;
 
 pub struct Mesh {
     pub name: String,
@@ -283,7 +280,7 @@ pub trait DrawModel<'a> {
     fn draw_mesh_instanced(
         &mut self,
         mesh: &'a Mesh,
-        material: &'a Material,
+        material: &'a GpuMaterial,
         instances: Range<u32>,
         per_frame_bind_group: &'a wgpu::BindGroup,
     );
@@ -296,7 +293,7 @@ where
     fn draw_mesh_instanced(
         &mut self,
         mesh: &'b Mesh,
-        material: &'b Material,
+        material: &'b GpuMaterial,
         instances: Range<u32>,
         per_frame_bind_group: &'b wgpu::BindGroup,
     ) {

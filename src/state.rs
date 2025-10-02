@@ -136,7 +136,7 @@ pub struct State {
     window: Arc<Window>,
     clear_color: wgpu::Color,
     models: std::collections::HashMap<String, Arc<model::Model>>,
-    materials: std::collections::HashMap<String, Arc<model::Material>>,
+    materials: std::collections::HashMap<String, Arc<model::GpuMaterial>>,
     textures: Arc<Mutex<std::collections::HashMap<String, Arc<GpuTexture>>>>,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     #[cfg(not(target_arch = "wasm32"))]
@@ -152,7 +152,7 @@ pub struct State {
             (
                 String,
                 model::Model,
-                std::collections::HashMap<String, model::Material>,
+                std::collections::HashMap<String, model::GpuMaterial>,
             ),
             String,
         >,
@@ -162,7 +162,7 @@ pub struct State {
             (
                 String,
                 model::Model,
-                std::collections::HashMap<String, model::Material>,
+                std::collections::HashMap<String, model::GpuMaterial>,
             ),
             String,
         >,

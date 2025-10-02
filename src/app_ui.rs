@@ -44,7 +44,7 @@ pub fn app_ui(
     queue: &wgpu::Queue,
     device: &wgpu::Device,
     models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
-    materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::Material>>,
+    materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::GpuMaterial>>,
     textures: &std::sync::Arc<
         std::sync::Mutex<
             std::collections::HashMap<String, std::sync::Arc<crate::texture::GpuTexture>>,
