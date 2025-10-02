@@ -128,10 +128,9 @@ pub struct State {
     mouse_pressed: bool,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
+    per_frame_bind_group: wgpu::BindGroup,
     light_manager: LightManager,
     light_buffer: wgpu::Buffer,
-    light_bind_group: wgpu::BindGroup,
     particle_system_manager: ParticleSystemManager,
     depth_texture: GpuTexture,
     window: Arc<Window>,
@@ -285,29 +284,33 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group_layout =
+        // Combined per-frame bind group layout (camera + lights)
+        let per_frame_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
-                label: Some("camera_bind_group_layout"),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+                label: Some("per_frame_bind_group_layout"),
             });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
 
         // Initialize light manager with default lights
         let mut light_manager = LightManager::with_lights(&[
@@ -324,28 +327,20 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let light_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("light_bind_group_layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+        // Create combined per-frame bind group (camera + lights)
+        let per_frame_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &per_frame_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
-
-        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("light_bind_group"),
-            layout: &light_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_buffer.as_entire_binding(),
-            }],
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: light_buffer.as_entire_binding(),
+                },
+            ],
+            label: Some("per_frame_bind_group"),
         });
 
         let shader_source = resources::load_string("shader.wgsl").await.unwrap();
@@ -357,11 +352,7 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    &texture_bind_group_layout,
-                    &camera_bind_group_layout,
-                    &light_bind_group_layout,
-                ],
+                bind_group_layouts: &[&per_frame_bind_group_layout, &texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -377,7 +368,7 @@ impl State {
         let light_render_pipeline = {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Light Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout, &light_bind_group_layout],
+                bind_group_layouts: &[&per_frame_bind_group_layout],
                 push_constant_ranges: &[],
             });
             let shader_source = resources::load_string("light.wgsl").await.unwrap();
@@ -493,11 +484,10 @@ impl State {
             projection,
             camera_controller,
             camera_buffer,
-            camera_bind_group,
+            per_frame_bind_group,
             camera_uniform,
             light_manager,
             light_buffer,
-            light_bind_group,
             particle_system_manager,
             depth_texture,
             window,
@@ -853,8 +843,7 @@ impl State {
                     render_pass.draw_light_mesh_instanced(
                         mesh,
                         0..self.light_manager.num_lights(),
-                        &self.camera_bind_group,
-                        &self.light_bind_group,
+                        &self.per_frame_bind_group,
                     );
                 }
             }
@@ -874,8 +863,7 @@ impl State {
                             mesh,
                             material,
                             0..system.num_instances(),
-                            &self.camera_bind_group,
-                            &self.light_bind_group,
+                            &self.per_frame_bind_group,
                         );
                     }
                 }

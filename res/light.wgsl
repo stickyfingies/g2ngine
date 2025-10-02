@@ -17,7 +17,7 @@ struct LightData {
     num_lights: u32,
 }
 
-@group(1) @binding(0)
+@group(0) @binding(1)
 var<uniform> light_data: LightData;
 
 //
