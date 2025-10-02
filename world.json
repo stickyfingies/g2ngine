@@ -1,54 +1,37 @@
 {
-  "background_color": [
-    0.1,
-    0.2,
-    0.3,
-    1.0
-  ],
+  "background_color": [0.1, 0.2, 0.3, 1.0],
   "camera": {
-    "position": [
-      -15.670849,
-      8.07068,
-      -4.632311
-    ],
-    "yaw_deg": 8.727984,
-    "pitch_deg": -9.913472,
+    "position": [-5.502331, 5.5027485, 13.550372],
+    "yaw_deg": -67.44349,
+    "pitch_deg": -15.051768,
     "fovy_deg": 45.0,
     "znear": 0.1,
     "zfar": 1000.0
   },
   "lights": [
     {
-      "position": [
-        2.0,
-        2.0,
-        2.0
-      ],
-      "color": [
-        1.0,
-        1.0,
-        1.0,
-        1.0
-      ],
+      "position": [2.0, 2.0, 2.0],
+      "color": [1.0, 1.0, 1.0, 1.0],
       "model": "teapot.obj",
       "mesh_index": 0,
-      "material_override": null
+      "material_source": {
+        "Model": {
+          "model_path": "cube.obj",
+          "material_name": "Material.001"
+        }
+      }
     },
     {
-      "position": [
-        9.5,
-        3.0,
-        -4.0
-      ],
-      "color": [
-        1.0,
-        0.0,
-        0.0,
-        1.0
-      ],
+      "position": [-2.0, 2.0, 2.0],
+      "color": [1.0, 0.0, 0.0, 1.0],
       "model": "teapot.obj",
       "mesh_index": 0,
-      "material_override": null
+      "material_source": {
+        "Model": {
+          "model_path": "cube.obj",
+          "material_name": "Material.001"
+        }
+      }
     }
   ],
   "particle_systems": [
@@ -56,47 +39,39 @@
       "name": "main",
       "model": "cube.obj",
       "mesh_index": 0,
-      "material_override": null,
+      "material_source": {
+        "Model": {
+          "model_path": "cube.obj",
+          "material_name": "Material.001"
+        }
+      },
       "generator": {
         "type": "grid",
-        "rows": 39,
-        "spacing": 7.1,
-        "center": [
-          0.0,
-          0.0,
-          0.0
-        ]
+        "rows": 30,
+        "spacing": 3.0,
+        "center": [0.0, 0.0, 0.0]
       }
     },
     {
       "name": "Sphere_1",
       "model": "cube.obj",
       "mesh_index": 0,
-      "material_override": {
-        "Custom": "Custom"
+      "material_source": {
+        "Custom": "customized"
       },
       "generator": {
         "type": "sphere",
-        "count": 450,
+        "count": 650,
         "radius": 20.0,
-        "center": [
-          0.0,
-          0.0,
-          0.0
-        ]
+        "center": [0.0, 0.0, 0.0]
       }
     }
   ],
   "custom_materials": [
     {
-      "name": "Custom",
+      "name": "customized",
       "texture_path": "white.png",
-      "color": [
-        0.2302643,
-        0.69560796,
-        0.7741825,
-        1.0
-      ]
+      "color": [0.2810369, 1.0, 0.81212974, 1.0]
     }
   ]
 }

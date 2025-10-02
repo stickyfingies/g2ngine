@@ -323,15 +323,12 @@ impl State {
                 label: Some("per_frame_bind_group_layout"),
             });
 
-        // Initialize light manager with default lights
-        let mut light_manager = LightManager::with_lights(&[
-            ([2.0, 2.0, 2.0], [1.0, 1.0, 1.0, 1.0]),
-            ([-2.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]),
-        ]);
-        light_manager.set_model_path(crate::defaults::LIGHT_MODEL_PATH.to_string());
-        // Light manager will use model's default material (no override needed)
+        // Note: Light manager and initial light buffer will be created after loading models
 
-        let lights = light_manager.sync_to_gpu();
+        // Placeholder - will be replaced after model loading
+        let lights =
+            crate::light::LightManager::new(model::MaterialSource::System("default".to_string()))
+                .sync_to_gpu();
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("light_buffer"),
             contents: bytemuck::cast_slice(&[lights]),
@@ -397,29 +394,15 @@ impl State {
             )
         };
 
-        // Get particle system parameters from JS and create the system in Rust
+        // Get particle system parameters from JS (will create system after loading model)
         let system_desc: ParticleSystemDesc = script_engine
             .call_js("makeParticleSystem".into(), &())
             .unwrap();
 
-        // NEW: Create particle system manager and add initial system
-        let mut particle_system_manager = ParticleSystemManager::new();
-
-        // Extract params from JS and create new-style grid system
-        let params = match system_desc {
+        // Extract params from JS for later use
+        let initial_grid_params = match system_desc {
             ParticleSystemDesc::Grid { params, .. } => params,
         };
-
-        let grid_system = ParticleSystem::new(
-            &device,
-            "main".to_string(),
-            crate::defaults::INITIAL_MODEL_PATH.to_string(),
-            0,    // mesh_index: use first mesh
-            None, // material_override: use model's default material
-            GeneratorType::Grid(params),
-        );
-
-        particle_system_manager.add("main".to_string(), grid_system);
 
         // Create texture registry
         let textures = Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -506,10 +489,69 @@ impl State {
             materials.insert(key, Arc::new(material));
         }
 
+        // Extract material sources before moving initial_model
+        let initial_material_source = initial_model.meshes[0].material_source.clone();
+
         models.insert(
             crate::defaults::INITIAL_MODEL_PATH.to_string(),
             Arc::new(initial_model),
         );
+
+        // Now that initial model is loaded, create particle system with proper material source
+        let mut particle_system_manager = ParticleSystemManager::new();
+        let grid_system = ParticleSystem::new(
+            &device,
+            "main".to_string(),
+            crate::defaults::INITIAL_MODEL_PATH.to_string(),
+            0, // mesh_index: use first mesh
+            initial_material_source.clone(),
+            GeneratorType::Grid(initial_grid_params),
+        );
+        particle_system_manager.add("main".to_string(), grid_system);
+
+        // Load light model (same as initial model in this case)
+        let light_material_source =
+            if crate::defaults::LIGHT_MODEL_PATH == crate::defaults::INITIAL_MODEL_PATH {
+                // Same model - reuse the material source we already extracted
+                initial_material_source
+            } else {
+                let (light_model, light_materials) = model::load_model(
+                    crate::defaults::LIGHT_MODEL_PATH,
+                    &device,
+                    &queue,
+                    &texture_bind_group_layout,
+                    &textures,
+                )
+                .await
+                .unwrap();
+
+                for (key, material) in light_materials {
+                    materials.insert(key, Arc::new(material));
+                }
+
+                let light_mat_source = light_model.meshes[0].material_source.clone();
+
+                models.insert(
+                    crate::defaults::LIGHT_MODEL_PATH.to_string(),
+                    Arc::new(light_model),
+                );
+
+                light_mat_source
+            };
+
+        // Initialize light manager with lights using the loaded model's material
+        let mut light_manager = LightManager::with_lights(
+            light_material_source,
+            &[
+                ([2.0, 2.0, 2.0], [1.0, 1.0, 1.0, 1.0]),
+                ([-2.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]),
+            ],
+        );
+        light_manager.set_model_path(crate::defaults::LIGHT_MODEL_PATH.to_string());
+
+        // Update light buffer with actual lights
+        let updated_lights = light_manager.sync_to_gpu();
+        queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&[updated_lights]));
 
         let egui_renderer = EguiRenderer::new(
             &device,
@@ -896,7 +938,7 @@ impl State {
             // Render lights
             render_pass.set_pipeline(&self.light_render_pipeline);
             if let Some(light_model) = self.models.get(self.light_manager.model_path()) {
-                let material_source = self.light_manager.resolve_material_source(light_model);
+                let material_source = self.light_manager.material_source();
                 if self.materials.contains_key(material_source) {
                     // Draw mesh at specified index
                     if let Some(mesh) = light_model.meshes.get(self.light_manager.mesh_index()) {
@@ -914,7 +956,7 @@ impl State {
 
             for (_name, system) in self.particle_system_manager.systems() {
                 if let Some(model) = self.models.get(system.model_path()) {
-                    let material_source = system.resolve_material_source(model);
+                    let material_source = system.material_source();
                     if let Some(material) = self.materials.get(material_source) {
                         render_pass.set_vertex_buffer(1, system.instance_buffer().slice(..));
                         // Draw mesh at specified index
@@ -1040,7 +1082,7 @@ impl State {
                     color: light.color,
                     model: self.light_manager.model_path().to_string(),
                     mesh_index: self.light_manager.mesh_index(),
-                    material_override: self.light_manager.material_override().cloned(),
+                    material_source: self.light_manager.material_source().clone(),
                 });
             }
         }
@@ -1052,7 +1094,7 @@ impl State {
                 name: name.clone(),
                 model: system.model_path().to_string(),
                 mesh_index: system.mesh_index(),
-                material_override: system.material_override().cloned(),
+                material_source: system.material_source().clone(),
                 generator: system.generator().clone(),
             });
         }
@@ -1162,16 +1204,19 @@ impl State {
         );
 
         // Load lights
-        self.light_manager = LightManager::new();
         if let Some(first_light) = data.lights.first() {
+            self.light_manager = LightManager::new(first_light.material_source.clone());
             self.light_manager.set_model_path(first_light.model.clone());
             self.light_manager.set_mesh_index(first_light.mesh_index);
-            self.light_manager
-                .set_material_override(first_light.material_override.clone());
-        }
-        for light_data in data.lights {
-            self.light_manager
-                .add_light(light_data.position, light_data.color);
+
+            for light_data in data.lights {
+                self.light_manager
+                    .add_light(light_data.position, light_data.color);
+            }
+        } else {
+            // No lights in saved world - create empty manager with default material
+            self.light_manager =
+                LightManager::new(model::MaterialSource::System("default".to_string()));
         }
 
         // Sync lights to GPU
@@ -1188,7 +1233,7 @@ impl State {
                 ps_data.name.clone(),
                 ps_data.model,
                 ps_data.mesh_index,
-                ps_data.material_override,
+                ps_data.material_source,
                 ps_data.generator,
             );
             self.particle_system_manager.add(ps_data.name, system);

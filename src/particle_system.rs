@@ -228,7 +228,7 @@ pub struct ParticleSystem {
     name: String,
     model_path: String,
     mesh_index: usize,
-    material_override: Option<crate::model::MaterialSource>,
+    material_source: crate::model::MaterialSource,
     generator: GeneratorType,
     instance_buffer: wgpu::Buffer,
     buffer_capacity: usize,
@@ -243,7 +243,7 @@ impl ParticleSystem {
         name: String,
         model_path: String,
         mesh_index: usize,
-        material_override: Option<crate::model::MaterialSource>,
+        material_source: crate::model::MaterialSource,
         generator: GeneratorType,
     ) -> Self {
         let instances = generator.generate();
@@ -259,7 +259,7 @@ impl ParticleSystem {
             name,
             model_path,
             mesh_index,
-            material_override,
+            material_source,
             generator,
             instance_buffer,
             buffer_capacity: instance_count,
@@ -289,23 +289,12 @@ impl ParticleSystem {
         self.mesh_index = index;
     }
 
-    pub fn material_override(&self) -> Option<&crate::model::MaterialSource> {
-        self.material_override.as_ref()
+    pub fn material_source(&self) -> &crate::model::MaterialSource {
+        &self.material_source
     }
 
-    pub fn set_material_override(&mut self, material: Option<crate::model::MaterialSource>) {
-        self.material_override = material;
-    }
-
-    /// Resolve the material source for this particle system.
-    /// Returns the override if set, otherwise returns the model's mesh material.
-    pub fn resolve_material_source<'a>(
-        &'a self,
-        model: &'a crate::model::Model,
-    ) -> &'a crate::model::MaterialSource {
-        self.material_override
-            .as_ref()
-            .unwrap_or(&model.meshes[self.mesh_index].material_source)
+    pub fn set_material_source(&mut self, material: crate::model::MaterialSource) {
+        self.material_source = material;
     }
 
     pub fn generator(&self) -> &GeneratorType {

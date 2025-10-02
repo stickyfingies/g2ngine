@@ -30,23 +30,26 @@ pub struct LightManager {
     dirty: bool,
     model_path: String,
     mesh_index: usize,
-    material_override: Option<crate::model::MaterialSource>,
+    material_source: crate::model::MaterialSource,
 }
 
 impl LightManager {
-    pub fn new() -> Self {
+    pub fn new(material_source: crate::model::MaterialSource) -> Self {
         Self {
             lights: [Light::default(); MAX_LIGHTS],
             active_mask: 0,
             dirty: false,
             model_path: crate::defaults::LIGHT_MODEL_PATH.to_string(),
             mesh_index: 0,
-            material_override: None,
+            material_source,
         }
     }
 
-    pub fn with_lights(lights: &[([f32; 3], [f32; 4])]) -> Self {
-        let mut manager = Self::new();
+    pub fn with_lights(
+        material_source: crate::model::MaterialSource,
+        lights: &[([f32; 3], [f32; 4])],
+    ) -> Self {
+        let mut manager = Self::new(material_source);
         for (pos, color) in lights {
             manager.add_light(*pos, *color);
         }
@@ -69,23 +72,12 @@ impl LightManager {
         self.mesh_index = index;
     }
 
-    pub fn material_override(&self) -> Option<&crate::model::MaterialSource> {
-        self.material_override.as_ref()
+    pub fn material_source(&self) -> &crate::model::MaterialSource {
+        &self.material_source
     }
 
-    pub fn set_material_override(&mut self, material: Option<crate::model::MaterialSource>) {
-        self.material_override = material;
-    }
-
-    /// Resolve the material source for lights.
-    /// Returns the override if set, otherwise returns the model's mesh material.
-    pub fn resolve_material_source<'a>(
-        &'a self,
-        model: &'a crate::model::Model,
-    ) -> &'a crate::model::MaterialSource {
-        self.material_override
-            .as_ref()
-            .unwrap_or(&model.meshes[self.mesh_index].material_source)
+    pub fn set_material_source(&mut self, material: crate::model::MaterialSource) {
+        self.material_source = material;
     }
 
     pub fn add_light(&mut self, pos: [f32; 3], color: [f32; 4]) -> Option<usize> {

@@ -65,8 +65,7 @@ pub struct LightParams {
     pub model: String,
     #[serde(default = "default_mesh_index")]
     pub mesh_index: usize,
-    #[serde(default)]
-    pub material_override: Option<crate::model::MaterialSource>,
+    pub material_source: crate::model::MaterialSource,
 }
 
 /// Particle system configuration
@@ -77,8 +76,7 @@ pub struct ParticleSystemData {
     pub model: String,
     #[serde(default = "default_mesh_index")]
     pub mesh_index: usize,
-    #[serde(default)]
-    pub material_override: Option<crate::model::MaterialSource>,
+    pub material_source: crate::model::MaterialSource,
     pub generator: GeneratorType,
 }
 

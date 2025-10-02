@@ -89,8 +89,8 @@ pub fn app_ui(
             // Check lights
             if !models.contains_key(light_manager.model_path()) {
                 missing_models.insert(light_manager.model_path().to_string());
-            } else if let Some(light_model) = models.get(light_manager.model_path()) {
-                let material_source = light_manager.resolve_material_source(light_model);
+            } else {
+                let material_source = light_manager.material_source();
                 if !materials.contains_key(material_source) {
                     missing_materials.insert(material_source.display_key());
                 }
@@ -100,8 +100,8 @@ pub fn app_ui(
             for (_name, system) in particle_system_manager.systems() {
                 if !models.contains_key(system.model_path()) {
                     missing_models.insert(system.model_path().to_string());
-                } else if let Some(model) = models.get(system.model_path()) {
-                    let material_source = system.resolve_material_source(model);
+                } else {
+                    let material_source = system.material_source();
                     if !materials.contains_key(material_source) {
                         missing_materials.insert(material_source.display_key());
                     }
@@ -202,14 +202,9 @@ pub fn app_ui(
                                                 },
                                             );
 
-                                            // Material override dropdown
-                                            let current_display = if let Some(override_mat) =
-                                                light_manager.material_override()
-                                            {
-                                                format!("Override: {}", override_mat.display_name())
-                                            } else {
-                                                "Use model's material".to_string()
-                                            };
+                                            // Material dropdown
+                                            let current_display =
+                                                light_manager.material_source().display_name();
 
                                             egui::ComboBox::from_id_source(format!(
                                                 "light_{}_material",
@@ -219,27 +214,11 @@ pub fn app_ui(
                                             .show_ui(
                                                 ui,
                                                 |ui| {
-                                                    // Option to use model's default
-                                                    if ui
-                                                        .selectable_label(
-                                                            light_manager
-                                                                .material_override()
-                                                                .is_none(),
-                                                            "Use model's material",
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        light_manager.set_material_override(None);
-                                                    }
-
-                                                    ui.separator();
-
                                                     // Show all available materials
                                                     for material_source in materials.keys() {
                                                         let is_selected = light_manager
-                                                            .material_override()
-                                                            .map(|m| m == material_source)
-                                                            .unwrap_or(false);
+                                                            .material_source()
+                                                            == material_source;
 
                                                         if ui
                                                             .selectable_label(
@@ -248,8 +227,8 @@ pub fn app_ui(
                                                             )
                                                             .clicked()
                                                         {
-                                                            light_manager.set_material_override(
-                                                                Some(material_source.clone()),
+                                                            light_manager.set_material_source(
+                                                                material_source.clone(),
                                                             );
                                                         }
                                                     }
@@ -329,12 +308,23 @@ pub fn app_ui(
                                 spacing: 1.0,
                                 center: [0.0, 0.0, 0.0],
                             };
+
+                            // Get material from the default model's first mesh
+                            let material_source = if let Some(model) =
+                                models.get(crate::defaults::PARTICLE_SYSTEM_MODEL_PATH)
+                            {
+                                model.meshes[0].material_source.clone()
+                            } else {
+                                // Fallback to default material if model not loaded
+                                crate::model::MaterialSource::System("default".to_string())
+                            };
+
                             let system = ParticleSystem::new(
                                 device,
                                 name.clone(),
                                 crate::defaults::PARTICLE_SYSTEM_MODEL_PATH.to_string(),
-                                0,    // mesh_index: use first mesh
-                                None, // material_override: use model's default material
+                                0, // mesh_index: use first mesh
+                                material_source,
                                 GeneratorType::Grid(params),
                             );
                             particle_system_manager.add(name, system);
@@ -347,12 +337,23 @@ pub fn app_ui(
                                 radius: 5.0,
                                 center: [0.0, 0.0, 0.0],
                             };
+
+                            // Get material from the default model's first mesh
+                            let material_source = if let Some(model) =
+                                models.get(crate::defaults::PARTICLE_SYSTEM_MODEL_PATH)
+                            {
+                                model.meshes[0].material_source.clone()
+                            } else {
+                                // Fallback to default material if model not loaded
+                                crate::model::MaterialSource::System("default".to_string())
+                            };
+
                             let system = ParticleSystem::new(
                                 device,
                                 name.clone(),
                                 crate::defaults::PARTICLE_SYSTEM_MODEL_PATH.to_string(),
-                                0,    // mesh_index: use first mesh
-                                None, // material_override: use model's default material
+                                0, // mesh_index: use first mesh
+                                material_source,
                                 GeneratorType::Sphere(params),
                             );
                             particle_system_manager.add(name, system);
@@ -395,14 +396,9 @@ pub fn app_ui(
                                                 }
                                             });
 
-                                        // Material override dropdown
-                                        let current_display = if let Some(override_mat) =
-                                            system.material_override()
-                                        {
-                                            format!("Override: {}", override_mat.display_name())
-                                        } else {
-                                            "Use model's material".to_string()
-                                        };
+                                        // Material dropdown
+                                        let current_display =
+                                            system.material_source().display_name();
 
                                         egui::ComboBox::from_id_source(format!(
                                             "{}_material",
@@ -412,25 +408,10 @@ pub fn app_ui(
                                         .show_ui(
                                             ui,
                                             |ui| {
-                                                // Option to use model's default
-                                                if ui
-                                                    .selectable_label(
-                                                        system.material_override().is_none(),
-                                                        "Use model's material",
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    system.set_material_override(None);
-                                                }
-
-                                                ui.separator();
-
                                                 // Show all available materials
                                                 for material_source in materials.keys() {
-                                                    let is_selected = system
-                                                        .material_override()
-                                                        .map(|m| m == material_source)
-                                                        .unwrap_or(false);
+                                                    let is_selected =
+                                                        system.material_source() == material_source;
 
                                                     if ui
                                                         .selectable_label(
@@ -439,9 +420,9 @@ pub fn app_ui(
                                                         )
                                                         .clicked()
                                                     {
-                                                        system.set_material_override(Some(
+                                                        system.set_material_source(
                                                             material_source.clone(),
-                                                        ));
+                                                        );
                                                     }
                                                 }
                                             },
