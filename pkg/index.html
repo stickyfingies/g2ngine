@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>WGPU</title>
+        <style>
+            canvas {
+                background-color: black;
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <script type="module">
+            import init from "./game.js";
+            init().then(() => {
+                console.log("WASM Loaded");
+            });
+        </script>
+    </body>
+</html>
