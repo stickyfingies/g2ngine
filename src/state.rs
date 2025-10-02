@@ -136,7 +136,7 @@ pub struct State {
     window: Arc<Window>,
     clear_color: wgpu::Color,
     models: std::collections::HashMap<String, Arc<model::Model>>,
-    materials: std::collections::HashMap<String, Arc<model::GpuMaterial>>,
+    materials: std::collections::HashMap<model::MaterialSource, Arc<model::GpuMaterial>>,
     textures: Arc<Mutex<std::collections::HashMap<String, Arc<GpuTexture>>>>,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     #[cfg(not(target_arch = "wasm32"))]
@@ -152,7 +152,7 @@ pub struct State {
             (
                 String,
                 model::Model,
-                std::collections::HashMap<String, model::GpuMaterial>,
+                std::collections::HashMap<model::MaterialSource, model::GpuMaterial>,
             ),
             String,
         >,
@@ -162,7 +162,7 @@ pub struct State {
             (
                 String,
                 model::Model,
-                std::collections::HashMap<String, model::GpuMaterial>,
+                std::collections::HashMap<model::MaterialSource, model::GpuMaterial>,
             ),
             String,
         >,
@@ -329,7 +329,7 @@ impl State {
             ([-2.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]),
         ]);
         light_manager.set_model_path(crate::defaults::LIGHT_MODEL_PATH.to_string());
-        light_manager.set_material_key(crate::defaults::LIGHT_MATERIAL_KEY.to_string());
+        // Light manager will use model's default material (no override needed)
 
         let lights = light_manager.sync_to_gpu();
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -414,7 +414,8 @@ impl State {
             &device,
             "main".to_string(),
             crate::defaults::INITIAL_MODEL_PATH.to_string(),
-            crate::defaults::DEFAULT_MATERIAL_KEY.to_string(),
+            0,    // mesh_index: use first mesh
+            None, // material_override: use model's default material
             GeneratorType::Grid(params),
         );
 
@@ -450,7 +451,6 @@ impl State {
                 name: "default".to_string(),
                 texture_path: texture_name.to_string(),
                 properties: std::cell::RefCell::new(model::MaterialProperties::default()),
-                source: model::MaterialSource::System,
             };
 
             let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -485,7 +485,8 @@ impl State {
                 bind_group,
             }
         };
-        materials.insert("default".to_string(), Arc::new(default_material));
+        let default_source = model::MaterialSource::System("default".to_string());
+        materials.insert(default_source, Arc::new(default_material));
 
         // Load initial model into HashMap
         let mut models = std::collections::HashMap::new();
@@ -894,17 +895,17 @@ impl State {
 
             // Render lights
             render_pass.set_pipeline(&self.light_render_pipeline);
-            if let (Some(light_model), Some(_light_material)) = (
-                self.models.get(self.light_manager.model_path()),
-                self.materials.get(self.light_manager.material_key()),
-            ) {
-                // Draw first mesh of the light model with the specified material
-                if let Some(mesh) = light_model.meshes.first() {
-                    render_pass.draw_light_mesh_instanced(
-                        mesh,
-                        0..self.light_manager.num_lights(),
-                        &self.per_frame_bind_group,
-                    );
+            if let Some(light_model) = self.models.get(self.light_manager.model_path()) {
+                let material_source = self.light_manager.resolve_material_source(light_model);
+                if self.materials.contains_key(material_source) {
+                    // Draw mesh at specified index
+                    if let Some(mesh) = light_model.meshes.get(self.light_manager.mesh_index()) {
+                        render_pass.draw_light_mesh_instanced(
+                            mesh,
+                            0..self.light_manager.num_lights(),
+                            &self.per_frame_bind_group,
+                        );
+                    }
                 }
             }
 
@@ -912,19 +913,19 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
 
             for (_name, system) in self.particle_system_manager.systems() {
-                if let (Some(model), Some(material)) = (
-                    self.models.get(system.model_path()),
-                    self.materials.get(system.material_key()),
-                ) {
-                    render_pass.set_vertex_buffer(1, system.instance_buffer().slice(..));
-                    // Draw first mesh with specified material
-                    if let Some(mesh) = model.meshes.first() {
-                        render_pass.draw_mesh_instanced(
-                            mesh,
-                            material,
-                            0..system.num_instances(),
-                            &self.per_frame_bind_group,
-                        );
+                if let Some(model) = self.models.get(system.model_path()) {
+                    let material_source = system.resolve_material_source(model);
+                    if let Some(material) = self.materials.get(material_source) {
+                        render_pass.set_vertex_buffer(1, system.instance_buffer().slice(..));
+                        // Draw mesh at specified index
+                        if let Some(mesh) = model.meshes.get(system.mesh_index()) {
+                            render_pass.draw_mesh_instanced(
+                                mesh,
+                                material,
+                                0..system.num_instances(),
+                                &self.per_frame_bind_group,
+                            );
+                        }
                     }
                 }
             }
@@ -1038,7 +1039,8 @@ impl State {
                     position: [light.position[0], light.position[1], light.position[2]],
                     color: light.color,
                     model: self.light_manager.model_path().to_string(),
-                    material_key: self.light_manager.material_key().to_string(),
+                    mesh_index: self.light_manager.mesh_index(),
+                    material_override: self.light_manager.material_override().cloned(),
                 });
             }
         }
@@ -1049,7 +1051,8 @@ impl State {
             particle_systems.push(ParticleSystemData {
                 name: name.clone(),
                 model: system.model_path().to_string(),
-                material_key: system.material_key().to_string(),
+                mesh_index: system.mesh_index(),
+                material_override: system.material_override().cloned(),
                 generator: system.generator().clone(),
             });
         }
@@ -1062,16 +1065,63 @@ impl State {
             self.clear_color.a as f32,
         ];
 
+        // Export custom materials
+        let mut custom_materials = Vec::new();
+        for (source, material) in &self.materials {
+            if let model::MaterialSource::Custom(name) = source {
+                custom_materials.push(crate::world::CustomMaterialData {
+                    name: name.clone(),
+                    texture_path: material.desc.texture_path.clone(),
+                    color: material.desc.properties.borrow().color,
+                });
+            }
+        }
+
         WorldData {
             background_color,
             camera: camera_data,
             lights,
             particle_systems,
+            custom_materials,
         }
     }
 
     /// Load world state from serialized data
     pub fn load_world(&mut self, data: WorldData) {
+        // Recreate custom materials first (they may be needed by other entities)
+        for mat_data in &data.custom_materials {
+            // Check if texture exists in registry
+            let texture_exists = {
+                let registry = self.textures.lock().unwrap();
+                registry.contains_key(&mat_data.texture_path)
+            };
+
+            if texture_exists {
+                match self.create_material(
+                    mat_data.name.clone(),
+                    mat_data.texture_path.clone(),
+                    mat_data.color,
+                ) {
+                    Ok(source) => {
+                        log::info!("Recreated custom material: {}", source.display_key());
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to recreate custom material '{}': {}",
+                            mat_data.name,
+                            e
+                        );
+                    }
+                }
+            } else {
+                log::warn!(
+                    "Cannot recreate custom material '{}': texture '{}' not found",
+                    mat_data.name,
+                    mat_data.texture_path
+                );
+            }
+        }
+
         // Pre-load all models required by the world
         let mut required_models = std::collections::HashSet::new();
         for light_data in &data.lights {
@@ -1115,8 +1165,9 @@ impl State {
         self.light_manager = LightManager::new();
         if let Some(first_light) = data.lights.first() {
             self.light_manager.set_model_path(first_light.model.clone());
+            self.light_manager.set_mesh_index(first_light.mesh_index);
             self.light_manager
-                .set_material_key(first_light.material_key.clone());
+                .set_material_override(first_light.material_override.clone());
         }
         for light_data in data.lights {
             self.light_manager
@@ -1136,7 +1187,8 @@ impl State {
                 &self.device,
                 ps_data.name.clone(),
                 ps_data.model,
-                ps_data.material_key,
+                ps_data.mesh_index,
+                ps_data.material_override,
                 ps_data.generator,
             );
             self.particle_system_manager.add(ps_data.name, system);
@@ -1216,13 +1268,13 @@ impl State {
         name: String,
         texture_path: String,
         color: [f32; 4],
-    ) -> Result<String, String> {
-        // Generate unique material key
-        let material_key = format!("custom/{}", name);
+    ) -> Result<model::MaterialSource, String> {
+        // Generate unique material source
+        let material_source = model::MaterialSource::Custom(name.clone());
 
         // Check if material already exists
-        if self.materials.contains_key(&material_key) {
-            return Err(format!("Material '{}' already exists", material_key));
+        if self.materials.contains_key(&material_source) {
+            return Err(format!("Material '{}' already exists", name));
         }
 
         // Get or load texture from registry
@@ -1242,7 +1294,6 @@ impl State {
             name: name.clone(),
             texture_path: texture_path.clone(),
             properties: std::cell::RefCell::new(model::MaterialProperties { color }),
-            source: model::MaterialSource::Custom,
         };
 
         let properties_buffer = self
@@ -1280,61 +1331,41 @@ impl State {
         };
 
         self.materials
-            .insert(material_key.clone(), Arc::new(gpu_material));
+            .insert(material_source.clone(), Arc::new(gpu_material));
         log::info!(
             "Created material '{}' with texture '{}'",
-            material_key,
+            material_source.display_key(),
             texture_path
         );
 
-        Ok(material_key)
-    }
-
-    /// Get all materials by source type
-    pub fn materials_by_source(
-        &self,
-        source: model::MaterialSource,
-    ) -> Vec<(String, Arc<model::GpuMaterial>)> {
-        self.materials
-            .iter()
-            .filter(|(_, material)| material.desc.source == source)
-            .map(|(key, material)| (key.clone(), Arc::clone(material)))
-            .collect()
+        Ok(material_source)
     }
 
     /// Check if a material can be edited (custom or modified model materials)
-    pub fn is_material_editable(&self, material_key: &str) -> bool {
-        if let Some(material) = self.materials.get(material_key) {
-            match material.desc.source {
-                model::MaterialSource::System => false, // System materials are read-only
-                model::MaterialSource::Model(_) => true, // Can modify model materials
-                model::MaterialSource::Custom => true,  // Can modify custom materials
-            }
-        } else {
-            false
+    pub fn is_material_editable(&self, material_source: &model::MaterialSource) -> bool {
+        match material_source {
+            model::MaterialSource::System(_) => false, // System materials are read-only
+            model::MaterialSource::Model { .. } => true, // Can modify model materials
+            model::MaterialSource::Custom(_) => true,  // Can modify custom materials
         }
     }
 
     /// Check if a material can be deleted
-    pub fn is_material_deletable(&self, material_key: &str) -> bool {
-        if let Some(material) = self.materials.get(material_key) {
-            matches!(material.desc.source, model::MaterialSource::Custom)
-        } else {
-            false
-        }
+    pub fn is_material_deletable(&self, material_source: &model::MaterialSource) -> bool {
+        matches!(material_source, model::MaterialSource::Custom(_))
     }
 
     /// Change a material's texture at runtime
     pub fn change_material_texture(
         &mut self,
-        material_key: &str,
+        material_source: &model::MaterialSource,
         new_texture_path: &str,
     ) -> Result<(), String> {
         // Get the material
         let material = self
             .materials
-            .get(material_key)
-            .ok_or_else(|| format!("Material '{}' not found", material_key))?;
+            .get(material_source)
+            .ok_or_else(|| format!("Material '{}' not found", material_source.display_key()))?;
 
         // Check if texture is already the same
         if material.desc.texture_path == new_texture_path {
@@ -1355,12 +1386,11 @@ impl State {
         // Clone the current properties
         let current_properties = *material.desc.properties.borrow();
 
-        // Create new material desc (preserve source)
+        // Create new material desc
         let new_desc = model::MaterialDesc {
             name: material.desc.name.clone(),
             texture_path: new_texture_path.to_string(),
             properties: std::cell::RefCell::new(current_properties),
-            source: material.desc.source.clone(),
         };
 
         // Create new properties buffer (reuse same data)
@@ -1402,10 +1432,10 @@ impl State {
 
         // Replace in registry
         self.materials
-            .insert(material_key.to_string(), Arc::new(new_gpu_material));
+            .insert(material_source.clone(), Arc::new(new_gpu_material));
         log::info!(
             "Changed material '{}' texture to '{}'",
-            material_key,
+            material_source.display_key(),
             new_texture_path
         );
 

@@ -1,6 +1,14 @@
 use crate::particle_system::GeneratorType;
 use serde::{Deserialize, Serialize};
 
+/// Serializable custom material data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomMaterialData {
+    pub name: String,
+    pub texture_path: String,
+    pub color: [f32; 4],
+}
+
 /// Serializable representation of the entire game world state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldData {
@@ -8,6 +16,8 @@ pub struct WorldData {
     pub camera: CameraData,
     pub lights: Vec<LightParams>,
     pub particle_systems: Vec<ParticleSystemData>,
+    #[serde(default)]
+    pub custom_materials: Vec<CustomMaterialData>,
 }
 
 impl Default for WorldData {
@@ -17,6 +27,7 @@ impl Default for WorldData {
             camera: CameraData::default(),
             lights: vec![],
             particle_systems: vec![],
+            custom_materials: vec![],
         }
     }
 }
@@ -52,8 +63,10 @@ pub struct LightParams {
     pub color: [f32; 4],
     #[serde(default = "default_model")]
     pub model: String,
-    #[serde(default = "default_material_key")]
-    pub material_key: String,
+    #[serde(default = "default_mesh_index")]
+    pub mesh_index: usize,
+    #[serde(default)]
+    pub material_override: Option<crate::model::MaterialSource>,
 }
 
 /// Particle system configuration
@@ -62,8 +75,10 @@ pub struct ParticleSystemData {
     pub name: String,
     #[serde(default = "default_model")]
     pub model: String,
-    #[serde(default = "default_material_key")]
-    pub material_key: String,
+    #[serde(default = "default_mesh_index")]
+    pub mesh_index: usize,
+    #[serde(default)]
+    pub material_override: Option<crate::model::MaterialSource>,
     pub generator: GeneratorType,
 }
 
@@ -71,8 +86,8 @@ fn default_model() -> String {
     crate::defaults::PARTICLE_SYSTEM_MODEL_PATH.to_string()
 }
 
-fn default_material_key() -> String {
-    crate::defaults::PARTICLE_SYSTEM_MATERIAL_KEY.to_string()
+fn default_mesh_index() -> usize {
+    0
 }
 
 impl ParticleSystemData {

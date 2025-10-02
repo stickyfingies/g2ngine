@@ -7,12 +7,12 @@
   ],
   "camera": {
     "position": [
-      0.9279208,
-      5.0,
-      12.409144
+      -15.670849,
+      8.07068,
+      -4.632311
     ],
-    "yaw_deg": -93.87297,
-    "pitch_deg": -16.45258,
+    "yaw_deg": 8.727984,
+    "pitch_deg": -9.913472,
     "fovy_deg": 45.0,
     "znear": 0.1,
     "zfar": 1000.0
@@ -30,14 +30,15 @@
         1.0,
         1.0
       ],
-      "model": "cube.obj",
-      "material_key": "cube/Material.001"
+      "model": "teapot.obj",
+      "mesh_index": 0,
+      "material_override": null
     },
     {
       "position": [
-        -2.0,
-        0.7,
-        2.0
+        9.5,
+        3.0,
+        -4.0
       ],
       "color": [
         1.0,
@@ -45,25 +46,57 @@
         0.0,
         1.0
       ],
-      "model": "cube.obj",
-      "material_key": "cube/Material.001"
+      "model": "teapot.obj",
+      "mesh_index": 0,
+      "material_override": null
     }
   ],
   "particle_systems": [
     {
       "name": "main",
       "model": "cube.obj",
-      "material_key": "cube/Material.001",
+      "mesh_index": 0,
+      "material_override": null,
       "generator": {
         "type": "grid",
-        "rows": 30,
-        "spacing": 3.0,
+        "rows": 39,
+        "spacing": 7.1,
         "center": [
           0.0,
           0.0,
           0.0
         ]
       }
+    },
+    {
+      "name": "Sphere_1",
+      "model": "cube.obj",
+      "mesh_index": 0,
+      "material_override": {
+        "Custom": "Custom"
+      },
+      "generator": {
+        "type": "sphere",
+        "count": 450,
+        "radius": 20.0,
+        "center": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    }
+  ],
+  "custom_materials": [
+    {
+      "name": "Custom",
+      "texture_path": "white.png",
+      "color": [
+        0.2302643,
+        0.69560796,
+        0.7741825,
+        1.0
+      ]
     }
   ]
 }

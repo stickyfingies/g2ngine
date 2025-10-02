@@ -227,7 +227,8 @@ pub enum ParticleSystemDesc {
 pub struct ParticleSystem {
     name: String,
     model_path: String,
-    material_key: String,
+    mesh_index: usize,
+    material_override: Option<crate::model::MaterialSource>,
     generator: GeneratorType,
     instance_buffer: wgpu::Buffer,
     buffer_capacity: usize,
@@ -241,7 +242,8 @@ impl ParticleSystem {
         device: &wgpu::Device,
         name: String,
         model_path: String,
-        material_key: String,
+        mesh_index: usize,
+        material_override: Option<crate::model::MaterialSource>,
         generator: GeneratorType,
     ) -> Self {
         let instances = generator.generate();
@@ -256,7 +258,8 @@ impl ParticleSystem {
         Self {
             name,
             model_path,
-            material_key,
+            mesh_index,
+            material_override,
             generator,
             instance_buffer,
             buffer_capacity: instance_count,
@@ -278,12 +281,31 @@ impl ParticleSystem {
         self.model_path = path;
     }
 
-    pub fn material_key(&self) -> &str {
-        &self.material_key
+    pub fn mesh_index(&self) -> usize {
+        self.mesh_index
     }
 
-    pub fn set_material_key(&mut self, key: String) {
-        self.material_key = key;
+    pub fn set_mesh_index(&mut self, index: usize) {
+        self.mesh_index = index;
+    }
+
+    pub fn material_override(&self) -> Option<&crate::model::MaterialSource> {
+        self.material_override.as_ref()
+    }
+
+    pub fn set_material_override(&mut self, material: Option<crate::model::MaterialSource>) {
+        self.material_override = material;
+    }
+
+    /// Resolve the material source for this particle system.
+    /// Returns the override if set, otherwise returns the model's mesh material.
+    pub fn resolve_material_source<'a>(
+        &'a self,
+        model: &'a crate::model::Model,
+    ) -> &'a crate::model::MaterialSource {
+        self.material_override
+            .as_ref()
+            .unwrap_or(&model.meshes[self.mesh_index].material_source)
     }
 
     pub fn generator(&self) -> &GeneratorType {

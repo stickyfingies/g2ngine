@@ -29,7 +29,8 @@ pub struct LightManager {
     active_mask: u32,
     dirty: bool,
     model_path: String,
-    material_key: String,
+    mesh_index: usize,
+    material_override: Option<crate::model::MaterialSource>,
 }
 
 impl LightManager {
@@ -39,7 +40,8 @@ impl LightManager {
             active_mask: 0,
             dirty: false,
             model_path: crate::defaults::LIGHT_MODEL_PATH.to_string(),
-            material_key: crate::defaults::LIGHT_MATERIAL_KEY.to_string(),
+            mesh_index: 0,
+            material_override: None,
         }
     }
 
@@ -59,12 +61,31 @@ impl LightManager {
         self.model_path = path;
     }
 
-    pub fn material_key(&self) -> &str {
-        &self.material_key
+    pub fn mesh_index(&self) -> usize {
+        self.mesh_index
     }
 
-    pub fn set_material_key(&mut self, key: String) {
-        self.material_key = key;
+    pub fn set_mesh_index(&mut self, index: usize) {
+        self.mesh_index = index;
+    }
+
+    pub fn material_override(&self) -> Option<&crate::model::MaterialSource> {
+        self.material_override.as_ref()
+    }
+
+    pub fn set_material_override(&mut self, material: Option<crate::model::MaterialSource>) {
+        self.material_override = material;
+    }
+
+    /// Resolve the material source for lights.
+    /// Returns the override if set, otherwise returns the model's mesh material.
+    pub fn resolve_material_source<'a>(
+        &'a self,
+        model: &'a crate::model::Model,
+    ) -> &'a crate::model::MaterialSource {
+        self.material_override
+            .as_ref()
+            .unwrap_or(&model.meshes[self.mesh_index].material_source)
     }
 
     pub fn add_light(&mut self, pos: [f32; 3], color: [f32; 4]) -> Option<usize> {

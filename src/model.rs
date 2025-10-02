@@ -10,15 +10,56 @@ use std::{
 };
 use wgpu::util::DeviceExt;
 
-/// Tracks the origin/source of a material
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Tracks the origin/source of a material - also used as HashMap key
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MaterialSource {
     /// Built-in system materials (e.g., "default")
-    System,
-    /// Materials loaded from model files, with the source model path
-    Model(String),
+    System(String),
+    /// Materials loaded from model files
+    Model {
+        model_path: String,
+        material_name: String,
+    },
     /// User-created custom materials
-    Custom,
+    Custom(String),
+}
+
+impl MaterialSource {
+    /// Get the display name for this material (just the name, no prefix)
+    pub fn display_name(&self) -> String {
+        match self {
+            MaterialSource::System(name) => name.clone(),
+            MaterialSource::Model { material_name, .. } => material_name.clone(),
+            MaterialSource::Custom(name) => name.clone(),
+        }
+    }
+
+    /// Get a full display key showing source and name
+    pub fn display_key(&self) -> String {
+        match self {
+            MaterialSource::System(name) => format!("system:{}", name),
+            MaterialSource::Model {
+                model_path,
+                material_name,
+            } => format!("{}:{}", model_path, material_name),
+            MaterialSource::Custom(name) => format!("custom:{}", name),
+        }
+    }
+
+    /// Get a human-readable description of the source
+    pub fn source_description(&self) -> String {
+        match self {
+            MaterialSource::System(_) => "System (built-in)".to_string(),
+            MaterialSource::Model { model_path, .. } => format!("Model ({})", model_path),
+            MaterialSource::Custom(_) => "Custom (user-created)".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for MaterialSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_key())
+    }
 }
 
 pub trait Vertex {
@@ -65,7 +106,7 @@ impl Vertex for ModelVertex {
 pub struct Model {
     pub name: String,
     pub meshes: Vec<Mesh>,
-    pub material_keys: Vec<String>,
+    pub material_keys: Vec<MaterialSource>,
 }
 
 #[repr(C)]
@@ -83,12 +124,12 @@ impl Default for MaterialProperties {
 }
 
 /// CPU-side material description (serializable, GPU-agnostic)
+/// Note: MaterialSource is now the HashMap key, not stored here
 #[derive(Debug, Clone)]
 pub struct MaterialDesc {
     pub name: String,
     pub texture_path: String,
     pub properties: RefCell<MaterialProperties>,
-    pub source: MaterialSource,
 }
 
 /// GPU realization of a material
@@ -106,7 +147,7 @@ pub struct Mesh {
     pub index_buffer: wgpu::Buffer,
     pub num_elements: u32,
     pub vertex_count: u32,
-    pub material_key: String,
+    pub material_source: MaterialSource,
 }
 
 pub async fn load_model(
@@ -115,7 +156,10 @@ pub async fn load_model(
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     texture_registry: &Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<GpuTexture>>>>,
-) -> anyhow::Result<(Model, std::collections::HashMap<String, GpuMaterial>)> {
+) -> anyhow::Result<(
+    Model,
+    std::collections::HashMap<MaterialSource, GpuMaterial>,
+)> {
     let obj_text = load_string(file_name).await?;
     let obj_cursor = Cursor::new(obj_text);
     let mut obj_reader = BufReader::new(obj_cursor);
@@ -142,10 +186,13 @@ pub async fn load_model(
         .trim_end_matches(".obj");
 
     let mut materials_map = std::collections::HashMap::new();
-    let mut material_keys = Vec::new();
+    let mut material_sources = Vec::new();
 
     for mat in obj_materials? {
-        let material_key = format!("{}/{}", model_name, mat.name);
+        let material_source = MaterialSource::Model {
+            model_path: file_name.to_string(),
+            material_name: mat.name.clone(),
+        };
         let diffuse_texture_filename = &mat.diffuse_texture;
 
         // Check if texture already exists in registry, otherwise load it
@@ -170,7 +217,6 @@ pub async fn load_model(
             name: mat.name.clone(),
             texture_path: diffuse_texture_filename.clone(),
             properties: RefCell::new(MaterialProperties::default()),
-            source: MaterialSource::Model(file_name.to_string()),
         };
 
         let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -199,7 +245,7 @@ pub async fn load_model(
         });
 
         materials_map.insert(
-            material_key.clone(),
+            material_source.clone(),
             GpuMaterial {
                 desc,
                 diffuse_texture,
@@ -207,12 +253,12 @@ pub async fn load_model(
                 bind_group,
             },
         );
-        material_keys.push(material_key);
+        material_sources.push(material_source);
     }
 
     // If no materials were loaded, use the default material
     if materials_map.is_empty() {
-        material_keys.push("default".to_string());
+        material_sources.push(MaterialSource::System("default".to_string()));
     }
 
     let meshes = models
@@ -260,12 +306,12 @@ pub async fn load_model(
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-            let material_key = match model.mesh.material_id {
-                Some(material_index) => material_keys
+            let material_source = match model.mesh.material_id {
+                Some(material_index) => material_sources
                     .get(material_index)
                     .cloned()
-                    .unwrap_or_else(|| "default".to_string()),
-                None => "default".to_string(),
+                    .unwrap_or_else(|| MaterialSource::System("default".to_string())),
+                None => MaterialSource::System("default".to_string()),
             };
 
             Mesh {
@@ -274,7 +320,7 @@ pub async fn load_model(
                 index_buffer,
                 num_elements: model.mesh.indices.len() as u32,
                 vertex_count: vertices.len() as u32,
-                material_key,
+                material_source,
             }
         })
         .collect::<Vec<_>>();
@@ -283,7 +329,7 @@ pub async fn load_model(
         Model {
             name: model_name.to_string(),
             meshes,
-            material_keys,
+            material_keys: material_sources,
         },
         materials_map,
     ))
