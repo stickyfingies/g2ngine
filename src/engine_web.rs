@@ -57,7 +57,13 @@ impl ScriptEngine for ScriptEngineWeb {
             .dyn_into::<HtmlScriptElement>()
             .unwrap();
 
-        script.set_src(&format!("/res/{}", path));
+        // Build URL using window.location.origin + pathname
+        let location = window.location();
+        let origin = location.origin().unwrap();
+        let pathname = location.pathname().unwrap();
+        let script_url = format!("{}{}/res/{}", origin, pathname, path);
+
+        script.set_src(&script_url);
         script.set_type("text/javascript");
 
         // Create a promise that resolves when the script loads
