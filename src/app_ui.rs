@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::light::LightManager;
 use crate::particle_system::{
     GeneratorType, GridParams, ParticleSystem, ParticleSystemManager, SphereParams,
@@ -6,12 +8,18 @@ use egui::{Align2, Context};
 
 pub struct UiState {
     pub model_path_input: String,
+    pub new_material_name: String,
+    pub new_material_texture: String,
+    pub new_material_color: [f32; 4],
 }
 
 impl Default for UiState {
     fn default() -> Self {
         Self {
             model_path_input: String::new(),
+            new_material_name: String::new(),
+            new_material_texture: String::new(),
+            new_material_color: [1.0, 1.0, 1.0, 1.0],
         }
     }
 }
@@ -21,6 +29,8 @@ pub struct UiActions {
     pub load_requested: bool,
     pub model_to_load: Option<String>,
     pub material_color_changed: Option<(String, [f32; 4])>,
+    pub material_to_create: Option<(String, String, [f32; 4])>, // (name, texture_path, color)
+    pub material_texture_changed: Option<(String, String)>,     // (material_key, new_texture_path)
 }
 
 impl Default for UiActions {
@@ -30,6 +40,8 @@ impl Default for UiActions {
             load_requested: false,
             model_to_load: None,
             material_color_changed: None,
+            material_to_create: None,
+            material_texture_changed: None,
         }
     }
 }
@@ -43,12 +55,10 @@ pub fn app_ui(
     delta_time_ms: f32,
     queue: &wgpu::Queue,
     device: &wgpu::Device,
-    models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
-    materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::GpuMaterial>>,
+    models: &HashMap<String, std::sync::Arc<crate::model::Model>>,
+    materials: &HashMap<String, std::sync::Arc<crate::model::GpuMaterial>>,
     textures: &std::sync::Arc<
-        std::sync::Mutex<
-            std::collections::HashMap<String, std::sync::Arc<crate::texture::GpuTexture>>,
-        >,
+        std::sync::Mutex<HashMap<String, std::sync::Arc<crate::texture::GpuTexture>>>,
     >,
     ui_state: &mut UiState,
     loading_models_count: usize,
@@ -565,8 +575,7 @@ pub fn app_ui(
                 let registry = textures.lock().unwrap();
 
                 // Count usage
-                let mut texture_usage: std::collections::HashMap<String, Vec<String>> =
-                    std::collections::HashMap::new();
+                let mut texture_usage: HashMap<String, Vec<String>> = HashMap::new();
                 for (mat_key, material) in materials.iter() {
                     texture_usage
                         .entry(material.desc.texture_path.clone())
@@ -602,10 +611,98 @@ pub fn app_ui(
 
             // Materials Inspection & Editing
             ui.collapsing(format!("🎨 Materials ({})", materials.len()), |ui| {
+                // New material creation UI
+                ui.collapsing("➕ New Material", |ui| {
+                    ui.label("Material Name:");
+                    ui.text_edit_singleline(&mut ui_state.new_material_name);
+
+                    ui.label("Texture:");
+                    let texture_registry = textures.lock().unwrap();
+                    let available_textures: Vec<String> =
+                        texture_registry.keys().cloned().collect();
+                    drop(texture_registry);
+
+                    if available_textures.is_empty() {
+                        ui.colored_label(
+                            egui::Color32::RED,
+                            "No textures loaded. Load a model first.",
+                        );
+                    } else {
+                        egui::ComboBox::from_id_source("new_material_texture")
+                            .selected_text(if ui_state.new_material_texture.is_empty() {
+                                "Select texture..."
+                            } else {
+                                &ui_state.new_material_texture
+                            })
+                            .show_ui(ui, |ui| {
+                                for texture_path in &available_textures {
+                                    if ui
+                                        .selectable_label(
+                                            ui_state.new_material_texture == *texture_path,
+                                            texture_path,
+                                        )
+                                        .clicked()
+                                    {
+                                        ui_state.new_material_texture = texture_path.clone();
+                                    }
+                                }
+                            });
+                    }
+
+                    ui.label("Color:");
+                    ui.color_edit_button_rgba_unmultiplied(&mut ui_state.new_material_color);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Create Material").clicked()
+                            && !ui_state.new_material_name.is_empty()
+                            && !ui_state.new_material_texture.is_empty()
+                        {
+                            actions.material_to_create = Some((
+                                ui_state.new_material_name.clone(),
+                                ui_state.new_material_texture.clone(),
+                                ui_state.new_material_color,
+                            ));
+                            // Reset form
+                            ui_state.new_material_name.clear();
+                            ui_state.new_material_texture.clear();
+                            ui_state.new_material_color = [1.0, 1.0, 1.0, 1.0];
+                        }
+                    });
+                });
+
+                ui.separator();
+
+                // Existing materials
                 for (key, material) in materials.iter() {
                     ui.push_id(key, |ui| {
                         ui.collapsing(&material.desc.name, |ui| {
                             ui.label(format!("Key: {}", key));
+                            ui.separator();
+
+                            // Texture selector
+                            ui.label("Texture:");
+                            let texture_registry = textures.lock().unwrap();
+                            let available_textures: Vec<String> =
+                                texture_registry.keys().cloned().collect();
+                            drop(texture_registry);
+
+                            egui::ComboBox::from_id_source(format!("{}_texture", key))
+                                .selected_text(&material.desc.texture_path)
+                                .show_ui(ui, |ui| {
+                                    for texture_path in &available_textures {
+                                        if ui
+                                            .selectable_label(
+                                                material.desc.texture_path == *texture_path,
+                                                texture_path,
+                                            )
+                                            .clicked()
+                                        {
+                                            actions.material_texture_changed =
+                                                Some((key.clone(), texture_path.clone()));
+                                        }
+                                    }
+                                });
+
                             ui.separator();
 
                             // Color picker

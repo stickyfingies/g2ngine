@@ -991,6 +991,21 @@ impl State {
                 );
             }
         }
+        if let Some((name, texture_path, color)) = ui_actions.material_to_create {
+            match self.create_material(name, texture_path, color) {
+                Ok(material_key) => {
+                    log::info!("Successfully created material: {}", material_key);
+                }
+                Err(e) => {
+                    log::error!("Failed to create material: {}", e);
+                }
+            }
+        }
+        if let Some((material_key, new_texture_path)) = ui_actions.material_texture_changed {
+            if let Err(e) = self.change_material_texture(&material_key, &new_texture_path) {
+                log::error!("Failed to change material texture: {}", e);
+            }
+        }
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
@@ -1191,6 +1206,172 @@ impl State {
         let world: WorldData = serde_json::from_str(&json)?;
         self.load_world(world);
         log::info!("World loaded from localStorage key: {}", key);
+        Ok(())
+    }
+
+    /// Create a new material dynamically at runtime
+    pub fn create_material(
+        &mut self,
+        name: String,
+        texture_path: String,
+        color: [f32; 4],
+    ) -> Result<String, String> {
+        // Generate unique material key
+        let material_key = format!("custom/{}", name);
+
+        // Check if material already exists
+        if self.materials.contains_key(&material_key) {
+            return Err(format!("Material '{}' already exists", material_key));
+        }
+
+        // Get or load texture from registry
+        let diffuse_texture = {
+            let mut registry = self.textures.lock().unwrap();
+            if let Some(existing) = registry.get(&texture_path) {
+                Arc::clone(existing)
+            } else {
+                return Err(format!(
+                    "Texture '{}' not found in registry. Load it first.",
+                    texture_path
+                ));
+            }
+        };
+
+        let desc = model::MaterialDesc {
+            name: name.clone(),
+            texture_path: texture_path.clone(),
+            properties: std::cell::RefCell::new(model::MaterialProperties { color }),
+        };
+
+        let properties_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{}_properties", name)),
+                contents: bytemuck::cast_slice(&[*desc.properties.borrow()]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{}_bind_group", name)),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: properties_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let gpu_material = model::GpuMaterial {
+            desc,
+            diffuse_texture,
+            properties_buffer,
+            bind_group,
+        };
+
+        self.materials
+            .insert(material_key.clone(), Arc::new(gpu_material));
+        log::info!(
+            "Created material '{}' with texture '{}'",
+            material_key,
+            texture_path
+        );
+
+        Ok(material_key)
+    }
+
+    /// Change a material's texture at runtime
+    pub fn change_material_texture(
+        &mut self,
+        material_key: &str,
+        new_texture_path: &str,
+    ) -> Result<(), String> {
+        // Get the material
+        let material = self
+            .materials
+            .get(material_key)
+            .ok_or_else(|| format!("Material '{}' not found", material_key))?;
+
+        // Check if texture is already the same
+        if material.desc.texture_path == new_texture_path {
+            return Ok(());
+        }
+
+        // Get or load new texture from registry
+        let new_texture = {
+            let registry = self.textures.lock().unwrap();
+            registry.get(new_texture_path).cloned().ok_or_else(|| {
+                format!(
+                    "Texture '{}' not found in registry. Load it first.",
+                    new_texture_path
+                )
+            })?
+        };
+
+        // Clone the current properties
+        let current_properties = *material.desc.properties.borrow();
+
+        // Create new material desc
+        let new_desc = model::MaterialDesc {
+            name: material.desc.name.clone(),
+            texture_path: new_texture_path.to_string(),
+            properties: std::cell::RefCell::new(current_properties),
+        };
+
+        // Create new properties buffer (reuse same data)
+        let properties_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{}_properties", material.desc.name)),
+                contents: bytemuck::cast_slice(&[current_properties]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        // Create new bind group with new texture
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{}_bind_group", material.desc.name)),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&new_texture.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&new_texture.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: properties_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Create new GPU material
+        let new_gpu_material = model::GpuMaterial {
+            desc: new_desc,
+            diffuse_texture: new_texture,
+            properties_buffer,
+            bind_group,
+        };
+
+        // Replace in registry
+        self.materials
+            .insert(material_key.to_string(), Arc::new(new_gpu_material));
+        log::info!(
+            "Changed material '{}' texture to '{}'",
+            material_key,
+            new_texture_path
+        );
+
         Ok(())
     }
 }
