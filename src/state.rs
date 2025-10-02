@@ -118,7 +118,6 @@ pub struct State {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    limits: wgpu::Limits,
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
     light_render_pipeline: wgpu::RenderPipeline,
@@ -193,10 +192,11 @@ impl State {
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                required_limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
+                required_limits: {
+                    let mut limits = wgpu::Limits::downlevel_webgl2_defaults();
+                    limits.max_texture_dimension_2d =
+                        wgpu::Limits::default().max_texture_dimension_2d;
+                    limits
                 },
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off, // Trace path
@@ -213,21 +213,11 @@ impl State {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
-        let mut size = window.inner_size();
-        #[cfg(target_arch = "wasm32")]
-        {
-            let scale_factor = web_sys::window().unwrap().device_pixel_ratio();
-            size.width = (size.width as f64 / scale_factor).round() as u32;
-            size.height = (size.height as f64 / scale_factor).round() as u32;
-        }
-
-        let max_dim = device.limits().max_texture_dimension_2d;
-
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width.max(1).min(max_dim),
-            height: size.height.max(1).min(max_dim),
+            width: size.width,
+            height: size.height,
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
@@ -448,7 +438,6 @@ impl State {
             device,
             queue,
             config,
-            limits,
             is_surface_configured: false,
             render_pipeline,
             light_render_pipeline,
@@ -514,25 +503,13 @@ impl State {
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
-            let (mut config_width, mut config_height) = (width, height);
-            #[cfg(target_arch = "wasm32")]
-            {
-                let scale_factor = web_sys::window().unwrap().device_pixel_ratio();
-                config_width = (width as f64 / scale_factor).round() as u32;
-                config_height = (height as f64 / scale_factor).round() as u32;
-            }
-
-            let max_dim = self.limits.max_texture_dimension_2d;
-            config_width = config_width.max(1).min(max_dim);
-            config_height = config_height.max(1).min(max_dim);
-
             self.is_surface_configured = true;
-            self.config.width = config_width;
-            self.config.height = config_height;
+            self.config.width = width;
+            self.config.height = height;
             self.surface.configure(&self.device, &self.config);
             self.depth_texture =
                 GpuTexture::create_depth_texture(&self.device, &self.config, "Depth Texture");
-            self.projection.resize(config_width, config_height);
+            self.projection.resize(width, height);
         }
     }
 
@@ -825,9 +802,6 @@ impl State {
 
         let screen_descriptor = ScreenDescriptor {
             size_in_pixels: [self.config.width, self.config.height],
-            #[cfg(target_arch = "wasm32")]
-            pixels_per_point: 1.0,
-            #[cfg(not(target_arch = "wasm32"))]
             pixels_per_point: self.window().scale_factor() as f32,
         };
 
