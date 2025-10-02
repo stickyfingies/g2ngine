@@ -450,6 +450,7 @@ impl State {
                 name: "default".to_string(),
                 texture_path: texture_name.to_string(),
                 properties: std::cell::RefCell::new(model::MaterialProperties::default()),
+                source: model::MaterialSource::System,
             };
 
             let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1241,6 +1242,7 @@ impl State {
             name: name.clone(),
             texture_path: texture_path.clone(),
             properties: std::cell::RefCell::new(model::MaterialProperties { color }),
+            source: model::MaterialSource::Custom,
         };
 
         let properties_buffer = self
@@ -1288,6 +1290,40 @@ impl State {
         Ok(material_key)
     }
 
+    /// Get all materials by source type
+    pub fn materials_by_source(
+        &self,
+        source: model::MaterialSource,
+    ) -> Vec<(String, Arc<model::GpuMaterial>)> {
+        self.materials
+            .iter()
+            .filter(|(_, material)| material.desc.source == source)
+            .map(|(key, material)| (key.clone(), Arc::clone(material)))
+            .collect()
+    }
+
+    /// Check if a material can be edited (custom or modified model materials)
+    pub fn is_material_editable(&self, material_key: &str) -> bool {
+        if let Some(material) = self.materials.get(material_key) {
+            match material.desc.source {
+                model::MaterialSource::System => false, // System materials are read-only
+                model::MaterialSource::Model(_) => true, // Can modify model materials
+                model::MaterialSource::Custom => true,  // Can modify custom materials
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Check if a material can be deleted
+    pub fn is_material_deletable(&self, material_key: &str) -> bool {
+        if let Some(material) = self.materials.get(material_key) {
+            matches!(material.desc.source, model::MaterialSource::Custom)
+        } else {
+            false
+        }
+    }
+
     /// Change a material's texture at runtime
     pub fn change_material_texture(
         &mut self,
@@ -1319,11 +1355,12 @@ impl State {
         // Clone the current properties
         let current_properties = *material.desc.properties.borrow();
 
-        // Create new material desc
+        // Create new material desc (preserve source)
         let new_desc = model::MaterialDesc {
             name: material.desc.name.clone(),
             texture_path: new_texture_path.to_string(),
             properties: std::cell::RefCell::new(current_properties),
+            source: material.desc.source.clone(),
         };
 
         // Create new properties buffer (reuse same data)

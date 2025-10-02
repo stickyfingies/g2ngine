@@ -10,6 +10,17 @@ use std::{
 };
 use wgpu::util::DeviceExt;
 
+/// Tracks the origin/source of a material
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MaterialSource {
+    /// Built-in system materials (e.g., "default")
+    System,
+    /// Materials loaded from model files, with the source model path
+    Model(String),
+    /// User-created custom materials
+    Custom,
+}
+
 pub trait Vertex {
     fn desc() -> wgpu::VertexBufferLayout<'static>;
 }
@@ -77,6 +88,7 @@ pub struct MaterialDesc {
     pub name: String,
     pub texture_path: String,
     pub properties: RefCell<MaterialProperties>,
+    pub source: MaterialSource,
 }
 
 /// GPU realization of a material
@@ -158,6 +170,7 @@ pub async fn load_model(
             name: mat.name.clone(),
             texture_path: diffuse_texture_filename.clone(),
             properties: RefCell::new(MaterialProperties::default()),
+            source: MaterialSource::Model(file_name.to_string()),
         };
 
         let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

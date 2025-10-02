@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::light::LightManager;
 use crate::particle_system::{
@@ -55,11 +56,9 @@ pub fn app_ui(
     delta_time_ms: f32,
     queue: &wgpu::Queue,
     device: &wgpu::Device,
-    models: &HashMap<String, std::sync::Arc<crate::model::Model>>,
-    materials: &HashMap<String, std::sync::Arc<crate::model::GpuMaterial>>,
-    textures: &std::sync::Arc<
-        std::sync::Mutex<HashMap<String, std::sync::Arc<crate::texture::GpuTexture>>>,
-    >,
+    models: &HashMap<String, Arc<crate::model::Model>>,
+    materials: &HashMap<String, Arc<crate::model::GpuMaterial>>,
+    textures: &Arc<Mutex<HashMap<String, std::sync::Arc<crate::texture::GpuTexture>>>>,
     ui_state: &mut UiState,
     loading_models_count: usize,
 ) -> UiActions {
@@ -672,47 +671,169 @@ pub fn app_ui(
 
                 ui.separator();
 
-                // Existing materials
+                // Group materials by source
+                let mut system_materials = Vec::new();
+                let mut model_materials = Vec::new();
+                let mut custom_materials = Vec::new();
+
                 for (key, material) in materials.iter() {
-                    ui.push_id(key, |ui| {
-                        ui.collapsing(&material.desc.name, |ui| {
-                            ui.label(format!("Key: {}", key));
-                            ui.separator();
+                    match &material.desc.source {
+                        crate::model::MaterialSource::System => {
+                            system_materials.push((key, material));
+                        }
+                        crate::model::MaterialSource::Model(_) => {
+                            model_materials.push((key, material));
+                        }
+                        crate::model::MaterialSource::Custom => {
+                            custom_materials.push((key, material));
+                        }
+                    }
+                }
 
-                            // Texture selector
-                            ui.label("Texture:");
-                            let texture_registry = textures.lock().unwrap();
-                            let available_textures: Vec<String> =
-                                texture_registry.keys().cloned().collect();
-                            drop(texture_registry);
+                // System Materials
+                if !system_materials.is_empty() {
+                    ui.label(egui::RichText::new("System Materials").strong());
+                    for (key, material) in system_materials {
+                        ui.push_id(key, |ui| {
+                            ui.collapsing(&material.desc.name, |ui| {
+                                ui.label(format!("Key: {}", key));
+                                ui.separator();
 
-                            egui::ComboBox::from_id_source(format!("{}_texture", key))
-                                .selected_text(&material.desc.texture_path)
-                                .show_ui(ui, |ui| {
-                                    for texture_path in &available_textures {
-                                        if ui
-                                            .selectable_label(
-                                                material.desc.texture_path == *texture_path,
-                                                texture_path,
-                                            )
-                                            .clicked()
-                                        {
-                                            actions.material_texture_changed =
-                                                Some((key.clone(), texture_path.clone()));
+                                // Texture selector
+                                ui.label("Texture:");
+                                let texture_registry = textures.lock().unwrap();
+                                let available_textures: Vec<String> =
+                                    texture_registry.keys().cloned().collect();
+                                drop(texture_registry);
+
+                                egui::ComboBox::from_id_source(format!("{}_texture", key))
+                                    .selected_text(&material.desc.texture_path)
+                                    .show_ui(ui, |ui| {
+                                        for texture_path in &available_textures {
+                                            if ui
+                                                .selectable_label(
+                                                    material.desc.texture_path == *texture_path,
+                                                    texture_path,
+                                                )
+                                                .clicked()
+                                            {
+                                                actions.material_texture_changed =
+                                                    Some((key.clone(), texture_path.clone()));
+                                            }
                                         }
-                                    }
-                                });
+                                    });
 
-                            ui.separator();
+                                ui.separator();
 
-                            // Color picker
-                            ui.label("Tint Color:");
-                            let mut color = material.desc.properties.borrow().color;
-                            if ui.color_edit_button_rgba_unmultiplied(&mut color).changed() {
-                                actions.material_color_changed = Some((key.clone(), color));
-                            }
+                                // Color picker
+                                ui.label("Tint Color:");
+                                let mut color = material.desc.properties.borrow().color;
+                                if ui.color_edit_button_rgba_unmultiplied(&mut color).changed() {
+                                    actions.material_color_changed = Some((key.clone(), color));
+                                }
+                            });
                         });
-                    });
+                    }
+                }
+
+                // Model Materials
+                if !model_materials.is_empty() {
+                    ui.label(egui::RichText::new("Model Materials").strong());
+                    for (key, material) in model_materials {
+                        ui.push_id(key, |ui| {
+                            ui.collapsing(&material.desc.name, |ui| {
+                                ui.label(format!("Key: {}", key));
+
+                                // Display source model
+                                if let crate::model::MaterialSource::Model(path) =
+                                    &material.desc.source
+                                {
+                                    ui.label(format!("From: {}", path));
+                                }
+
+                                ui.separator();
+
+                                // Texture selector
+                                ui.label("Texture:");
+                                let texture_registry = textures.lock().unwrap();
+                                let available_textures: Vec<String> =
+                                    texture_registry.keys().cloned().collect();
+                                drop(texture_registry);
+
+                                egui::ComboBox::from_id_source(format!("{}_texture", key))
+                                    .selected_text(&material.desc.texture_path)
+                                    .show_ui(ui, |ui| {
+                                        for texture_path in &available_textures {
+                                            if ui
+                                                .selectable_label(
+                                                    material.desc.texture_path == *texture_path,
+                                                    texture_path,
+                                                )
+                                                .clicked()
+                                            {
+                                                actions.material_texture_changed =
+                                                    Some((key.clone(), texture_path.clone()));
+                                            }
+                                        }
+                                    });
+
+                                ui.separator();
+
+                                // Color picker
+                                ui.label("Tint Color:");
+                                let mut color = material.desc.properties.borrow().color;
+                                if ui.color_edit_button_rgba_unmultiplied(&mut color).changed() {
+                                    actions.material_color_changed = Some((key.clone(), color));
+                                }
+                            });
+                        });
+                    }
+                }
+
+                // Custom Materials
+                if !custom_materials.is_empty() {
+                    ui.label(egui::RichText::new("Custom Materials").strong());
+                    for (key, material) in custom_materials {
+                        ui.push_id(key, |ui| {
+                            ui.collapsing(&material.desc.name, |ui| {
+                                ui.label(format!("Key: {}", key));
+                                ui.separator();
+
+                                // Texture selector
+                                ui.label("Texture:");
+                                let texture_registry = textures.lock().unwrap();
+                                let available_textures: Vec<String> =
+                                    texture_registry.keys().cloned().collect();
+                                drop(texture_registry);
+
+                                egui::ComboBox::from_id_source(format!("{}_texture", key))
+                                    .selected_text(&material.desc.texture_path)
+                                    .show_ui(ui, |ui| {
+                                        for texture_path in &available_textures {
+                                            if ui
+                                                .selectable_label(
+                                                    material.desc.texture_path == *texture_path,
+                                                    texture_path,
+                                                )
+                                                .clicked()
+                                            {
+                                                actions.material_texture_changed =
+                                                    Some((key.clone(), texture_path.clone()));
+                                            }
+                                        }
+                                    });
+
+                                ui.separator();
+
+                                // Color picker
+                                ui.label("Tint Color:");
+                                let mut color = material.desc.properties.borrow().color;
+                                if ui.color_edit_button_rgba_unmultiplied(&mut color).changed() {
+                                    actions.material_color_changed = Some((key.clone(), color));
+                                }
+                            });
+                        });
+                    }
                 }
             });
 
