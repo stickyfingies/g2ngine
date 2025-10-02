@@ -6,6 +6,7 @@ use std::{
     cell::RefCell,
     io::{BufReader, Cursor},
     ops::Range,
+    sync::Arc,
 };
 use wgpu::util::DeviceExt;
 
@@ -70,14 +71,25 @@ impl Default for MaterialProperties {
     }
 }
 
-#[allow(dead_code)]
-pub struct Material {
+/// CPU-side material description (serializable, GPU-agnostic)
+#[derive(Debug, Clone)]
+pub struct MaterialDesc {
     pub name: String,
-    pub diffuse_texture: texture::GpuTexture,
-    pub properties_buffer: wgpu::Buffer,
+    pub texture_path: String,
     pub properties: RefCell<MaterialProperties>,
+}
+
+/// GPU realization of a material
+#[allow(dead_code)]
+pub struct GpuMaterial {
+    pub desc: MaterialDesc,
+    pub diffuse_texture: Arc<GpuTexture>,
+    pub properties_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
+
+// Type alias for backwards compatibility during transition
+pub type Material = GpuMaterial;
 
 pub struct Mesh {
     pub name: String,
@@ -93,7 +105,8 @@ pub async fn load_model(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
-) -> anyhow::Result<(Model, std::collections::HashMap<String, Material>)> {
+    texture_registry: &Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<GpuTexture>>>>,
+) -> anyhow::Result<(Model, std::collections::HashMap<String, GpuMaterial>)> {
     let obj_text = load_string(file_name).await?;
     let obj_cursor = Cursor::new(obj_text);
     let mut obj_reader = BufReader::new(obj_cursor);
@@ -125,18 +138,34 @@ pub async fn load_model(
     for mat in obj_materials? {
         let material_key = format!("{}/{}", model_name, mat.name);
         let diffuse_texture_filename = &mat.diffuse_texture;
-        let diffuse_texture_bytes = load_binary(&diffuse_texture_filename).await?;
-        let diffuse_texture = GpuTexture::from_bytes(
-            device,
-            queue,
-            &diffuse_texture_bytes,
-            diffuse_texture_filename,
-        )?;
 
-        let properties = MaterialProperties::default();
+        // Check if texture already exists in registry, otherwise load it
+        let diffuse_texture = {
+            let mut registry = texture_registry.lock().unwrap();
+            if let Some(existing_texture) = registry.get(diffuse_texture_filename) {
+                Arc::clone(existing_texture)
+            } else {
+                let diffuse_texture_bytes = load_binary(&diffuse_texture_filename).await?;
+                let texture = Arc::new(GpuTexture::from_bytes(
+                    device,
+                    queue,
+                    &diffuse_texture_bytes,
+                    diffuse_texture_filename,
+                )?);
+                registry.insert(diffuse_texture_filename.clone(), Arc::clone(&texture));
+                texture
+            }
+        };
+
+        let desc = MaterialDesc {
+            name: mat.name.clone(),
+            texture_path: diffuse_texture_filename.clone(),
+            properties: RefCell::new(MaterialProperties::default()),
+        };
+
         let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}_properties", mat.name)),
-            contents: bytemuck::cast_slice(&[properties]),
+            contents: bytemuck::cast_slice(&[*desc.properties.borrow()]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -161,11 +190,10 @@ pub async fn load_model(
 
         materials_map.insert(
             material_key.clone(),
-            Material {
-                name: mat.name,
+            GpuMaterial {
+                desc,
                 diffuse_texture,
                 properties_buffer,
-                properties: RefCell::new(properties),
                 bind_group,
             },
         );

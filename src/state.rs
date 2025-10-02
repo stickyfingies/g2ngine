@@ -10,7 +10,7 @@ use crate::world::{CameraData, LightParams, ParticleSystemData, WorldData};
 use crate::{camera, resources};
 use cgmath::{Deg, Matrix4, Point3, Rad};
 use egui_wgpu::ScreenDescriptor;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::{iter, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
@@ -137,6 +137,7 @@ pub struct State {
     clear_color: wgpu::Color,
     models: std::collections::HashMap<String, Arc<model::Model>>,
     materials: std::collections::HashMap<String, Arc<model::Material>>,
+    textures: Arc<Mutex<std::collections::HashMap<String, Arc<GpuTexture>>>>,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     #[cfg(not(target_arch = "wasm32"))]
     script_engine: ScriptEngineDesktop,
@@ -419,17 +420,41 @@ impl State {
 
         particle_system_manager.add("main".to_string(), grid_system);
 
+        // Create texture registry
+        let textures = Arc::new(Mutex::new(std::collections::HashMap::new()));
+
         // Create default material
         let mut materials = std::collections::HashMap::new();
         let default_material = {
-            let diffuse_texture_bytes = resources::load_binary("white.png").await?;
-            let diffuse_texture =
-                GpuTexture::from_bytes(&device, &queue, &diffuse_texture_bytes, "white.png")?;
+            let texture_name = "white.png";
 
-            let properties = model::MaterialProperties::default();
+            // Load texture into registry
+            let diffuse_texture = {
+                let mut registry = textures.lock().unwrap();
+                if let Some(existing) = registry.get(texture_name) {
+                    Arc::clone(existing)
+                } else {
+                    let diffuse_texture_bytes = resources::load_binary(texture_name).await?;
+                    let texture = Arc::new(GpuTexture::from_bytes(
+                        &device,
+                        &queue,
+                        &diffuse_texture_bytes,
+                        texture_name,
+                    )?);
+                    registry.insert(texture_name.to_string(), Arc::clone(&texture));
+                    texture
+                }
+            };
+
+            let desc = model::MaterialDesc {
+                name: "default".to_string(),
+                texture_path: texture_name.to_string(),
+                properties: std::cell::RefCell::new(model::MaterialProperties::default()),
+            };
+
             let properties_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("default_material_properties"),
-                contents: bytemuck::cast_slice(&[properties]),
+                contents: bytemuck::cast_slice(&[*desc.properties.borrow()]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
@@ -452,11 +477,10 @@ impl State {
                 ],
             });
 
-            model::Material {
-                name: "default".to_string(),
+            model::GpuMaterial {
+                desc,
                 diffuse_texture,
                 properties_buffer,
-                properties: std::cell::RefCell::new(properties),
                 bind_group,
             }
         };
@@ -470,6 +494,7 @@ impl State {
             &device,
             &queue,
             &texture_bind_group_layout,
+            &textures,
         )
         .await
         .unwrap();
@@ -524,6 +549,7 @@ impl State {
             script_engine,
             models,
             materials,
+            textures,
             texture_bind_group_layout,
             elapsed_time: 0.0,
             pending_model_loads: std::collections::HashSet::new(),
@@ -548,6 +574,7 @@ impl State {
                 &self.device,
                 &self.queue,
                 &self.texture_bind_group_layout,
+                &self.textures,
             )
             .await?;
 
@@ -690,6 +717,7 @@ impl State {
                     let device = self.device.clone();
                     let queue = self.queue.clone();
                     let texture_bind_group_layout = self.texture_bind_group_layout.clone();
+                    let textures = Arc::clone(&self.textures);
                     let sender = self.loaded_model_sender.clone();
                     let path_clone = path.clone();
 
@@ -699,6 +727,7 @@ impl State {
                             &device,
                             &queue,
                             &texture_bind_group_layout,
+                            &textures,
                         ));
 
                         match result {
@@ -729,11 +758,18 @@ impl State {
                     let device = self.device.clone();
                     let queue = self.queue.clone();
                     let texture_bind_group_layout = self.texture_bind_group_layout.clone();
+                    let textures = Arc::clone(&self.textures);
                     let sender = self.loaded_model_sender.clone();
 
                     wasm_bindgen_futures::spawn_local(async move {
-                        match model::load_model(&path, &device, &queue, &texture_bind_group_layout)
-                            .await
+                        match model::load_model(
+                            &path,
+                            &device,
+                            &queue,
+                            &texture_bind_group_layout,
+                            &textures,
+                        )
+                        .await
                         {
                             Ok((loaded_model, materials)) => {
                                 log::info!("Model '{}' loaded, sending to main thread", path);
@@ -924,6 +960,7 @@ impl State {
                     &self.device,
                     &self.models,
                     &self.materials,
+                    &self.textures,
                     &mut self.ui_state,
                     loading_models_count,
                 )
@@ -946,11 +983,11 @@ impl State {
         }
         if let Some((material_key, color)) = ui_actions.material_color_changed {
             if let Some(material) = self.materials.get(&material_key) {
-                material.properties.borrow_mut().color = color;
+                material.desc.properties.borrow_mut().color = color;
                 self.queue.write_buffer(
                     &material.properties_buffer,
                     0,
-                    bytemuck::cast_slice(&[*material.properties.borrow()]),
+                    bytemuck::cast_slice(&[*material.desc.properties.borrow()]),
                 );
             }
         }

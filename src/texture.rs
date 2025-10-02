@@ -6,6 +6,9 @@ pub struct GpuTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl GpuTexture {
@@ -78,6 +81,9 @@ impl GpuTexture {
             texture,
             view,
             sampler,
+            label: label.unwrap_or("unknown").to_string(),
+            width: dimensions.0,
+            height: dimensions.1,
         })
     }
 
@@ -122,6 +128,9 @@ impl GpuTexture {
             texture,
             view,
             sampler,
+            label: label.to_string(),
+            width: size.width,
+            height: size.height,
         }
     }
 }

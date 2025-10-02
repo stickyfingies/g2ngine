@@ -45,6 +45,11 @@ pub fn app_ui(
     device: &wgpu::Device,
     models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
     materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::Material>>,
+    textures: &std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, std::sync::Arc<crate::texture::GpuTexture>>,
+        >,
+    >,
     ui_state: &mut UiState,
     loading_models_count: usize,
 ) -> UiActions {
@@ -555,17 +560,57 @@ pub fn app_ui(
 
             ui.separator();
 
+            // Textures Inspection
+            ui.collapsing(format!("🖼️ Textures"), |ui| {
+                let registry = textures.lock().unwrap();
+
+                // Count usage
+                let mut texture_usage: std::collections::HashMap<String, Vec<String>> =
+                    std::collections::HashMap::new();
+                for (mat_key, material) in materials.iter() {
+                    texture_usage
+                        .entry(material.desc.texture_path.clone())
+                        .or_default()
+                        .push(mat_key.clone());
+                }
+
+                for (path, texture) in registry.iter() {
+                    let users = texture_usage.get(path).map(|v| v.len()).unwrap_or(0);
+                    let size_bytes = texture.width * texture.height * 4; // RGBA
+                    let size_kb = size_bytes as f32 / 1024.0;
+
+                    ui.collapsing(&texture.label, |ui| {
+                        ui.label(format!("Size: {}×{}", texture.width, texture.height));
+                        ui.label(format!("Memory: {:.1} KB", size_kb));
+                        ui.label(format!(
+                            "Used by {} material{}",
+                            users,
+                            if users == 1 { "" } else { "s" }
+                        ));
+
+                        if let Some(material_keys) = texture_usage.get(path) {
+                            ui.label("Materials:");
+                            for mat_key in material_keys {
+                                ui.label(format!("  • {}", mat_key));
+                            }
+                        }
+                    });
+                }
+            });
+
+            ui.separator();
+
             // Materials Inspection & Editing
             ui.collapsing(format!("🎨 Materials ({})", materials.len()), |ui| {
                 for (key, material) in materials.iter() {
                     ui.push_id(key, |ui| {
-                        ui.collapsing(&material.name, |ui| {
+                        ui.collapsing(&material.desc.name, |ui| {
                             ui.label(format!("Key: {}", key));
                             ui.separator();
 
                             // Color picker
                             ui.label("Tint Color:");
-                            let mut color = material.properties.borrow().color;
+                            let mut color = material.desc.properties.borrow().color;
                             if ui.color_edit_button_rgba_unmultiplied(&mut color).changed() {
                                 actions.material_color_changed = Some((key.clone(), color));
                             }
