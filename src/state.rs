@@ -144,19 +144,29 @@ pub struct State {
     #[cfg(target_arch = "wasm32")]
     script_engine: ScriptEngineWeb,
     elapsed_time: f32,
-    pending_model_loads: Vec<String>,
+    pending_model_loads: std::collections::HashSet<String>,
+    in_flight_model_loads: std::collections::HashSet<String>,
     ui_state: crate::app_ui::UiState,
-    loaded_model_receiver: mpsc::Receiver<(
-        String,
-        model::Model,
-        std::collections::HashMap<String, model::Material>,
-    )>,
-    #[cfg(target_arch = "wasm32")]
-    loaded_model_sender: mpsc::Sender<(
-        String,
-        model::Model,
-        std::collections::HashMap<String, model::Material>,
-    )>,
+    loaded_model_receiver: mpsc::Receiver<
+        Result<
+            (
+                String,
+                model::Model,
+                std::collections::HashMap<String, model::Material>,
+            ),
+            String,
+        >,
+    >,
+    loaded_model_sender: mpsc::Sender<
+        Result<
+            (
+                String,
+                model::Model,
+                std::collections::HashMap<String, model::Material>,
+            ),
+            String,
+        >,
+    >,
 }
 
 impl State {
@@ -300,10 +310,12 @@ impl State {
         });
 
         // Initialize light manager with default lights
-        let light_manager = LightManager::with_lights(&[
+        let mut light_manager = LightManager::with_lights(&[
             ([2.0, 2.0, 2.0], [1.0, 1.0, 1.0, 1.0]),
             ([-2.0, 2.0, 2.0], [1.0, 0.0, 0.0, 1.0]),
         ]);
+        light_manager.set_model_path(crate::defaults::LIGHT_MODEL_PATH.to_string());
+        light_manager.set_material_key(crate::defaults::LIGHT_MATERIAL_KEY.to_string());
 
         let lights = light_manager.sync_to_gpu();
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -399,8 +411,8 @@ impl State {
         let grid_system = ParticleSystem::new(
             &device,
             "main".to_string(),
-            "cube.obj".to_string(),
-            "default".to_string(),
+            crate::defaults::INITIAL_MODEL_PATH.to_string(),
+            crate::defaults::DEFAULT_MATERIAL_KEY.to_string(),
             GeneratorType::Grid(params),
         );
 
@@ -439,17 +451,24 @@ impl State {
         // Load initial model into HashMap
         let mut models = std::collections::HashMap::new();
 
-        let (teapot_model, teapot_materials) =
-            model::load_model("cube.obj", &device, &queue, &texture_bind_group_layout)
-                .await
-                .unwrap();
+        let (initial_model, initial_materials) = model::load_model(
+            crate::defaults::INITIAL_MODEL_PATH,
+            &device,
+            &queue,
+            &texture_bind_group_layout,
+        )
+        .await
+        .unwrap();
 
         // Move materials directly into registry (no cloning needed)
-        for (key, material) in teapot_materials {
+        for (key, material) in initial_materials {
             materials.insert(key, Arc::new(material));
         }
 
-        models.insert("cube.obj".to_string(), Arc::new(teapot_model));
+        models.insert(
+            crate::defaults::INITIAL_MODEL_PATH.to_string(),
+            Arc::new(initial_model),
+        );
 
         let egui_renderer = EguiRenderer::new(
             &device,
@@ -494,10 +513,10 @@ impl State {
             materials,
             texture_bind_group_layout,
             elapsed_time: 0.0,
-            pending_model_loads: Vec::new(),
+            pending_model_loads: std::collections::HashSet::new(),
+            in_flight_model_loads: std::collections::HashSet::new(),
             ui_state: crate::app_ui::UiState::default(),
             loaded_model_receiver,
-            #[cfg(target_arch = "wasm32")]
             loaded_model_sender,
         })
     }
@@ -607,55 +626,88 @@ impl State {
             self.light_manager.clear_dirty();
         }
 
-        // Poll channel for loaded models (from async web tasks)
-        while let Ok((path, loaded_model, materials)) = self.loaded_model_receiver.try_recv() {
-            log::info!("Registering loaded model: {}", path);
+        // Poll channel for loaded models (from async tasks)
+        while let Ok(result) = self.loaded_model_receiver.try_recv() {
+            match result {
+                Ok((path, loaded_model, materials)) => {
+                    log::info!("Registering loaded model: {}", path);
 
-            // Register materials
-            for (key, material) in materials {
-                self.materials.insert(key, Arc::new(material));
+                    // Register materials
+                    for (key, material) in materials {
+                        self.materials.insert(key, Arc::new(material));
+                    }
+
+                    // Register model
+                    self.models.insert(path.clone(), Arc::new(loaded_model));
+                    self.in_flight_model_loads.remove(&path);
+                    log::info!("Model '{}' registered successfully", path);
+                }
+                Err(error_msg) => {
+                    log::error!("Model load failed: {}", error_msg);
+                    // Extract path from error message if possible
+                    if let Some(path) = error_msg.split('\'').nth(1) {
+                        self.in_flight_model_loads.remove(path);
+                    }
+                }
             }
-
-            // Register model
-            self.models.insert(path.clone(), Arc::new(loaded_model));
-            log::info!("Model '{}' registered successfully", path);
         }
 
         // Process pending model loads
         if !self.pending_model_loads.is_empty() {
-            let paths_to_load = std::mem::take(&mut self.pending_model_loads);
+            let paths_to_load: Vec<String> = self.pending_model_loads.drain().collect();
 
             for path in paths_to_load {
-                // Check if already loaded
+                // Check if already loaded or currently loading
                 if self.models.contains_key(&path) {
                     log::info!("Model '{}' already loaded", path);
                     continue;
                 }
 
-                log::info!("Loading model: {}", path);
+                if self.in_flight_model_loads.contains(&path) {
+                    log::info!("Model '{}' already loading", path);
+                    continue;
+                }
+
+                log::info!("Starting load for model: {}", path);
+                self.in_flight_model_loads.insert(path.clone());
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    // Desktop: block on the async load
-                    match pollster::block_on(model::load_model(
-                        &path,
-                        &self.device,
-                        &self.queue,
-                        &self.texture_bind_group_layout,
-                    )) {
-                        Ok((loaded_model, materials)) => {
-                            // Register materials
-                            for (key, material) in materials {
-                                self.materials.insert(key, Arc::new(material));
+                    // Desktop: spawn thread and send result through channel
+                    let device = self.device.clone();
+                    let queue = self.queue.clone();
+                    let texture_bind_group_layout = self.texture_bind_group_layout.clone();
+                    let sender = self.loaded_model_sender.clone();
+                    let path_clone = path.clone();
+
+                    std::thread::spawn(move || {
+                        let result = pollster::block_on(model::load_model(
+                            &path_clone,
+                            &device,
+                            &queue,
+                            &texture_bind_group_layout,
+                        ));
+
+                        match result {
+                            Ok((loaded_model, materials)) => {
+                                log::info!("Model '{}' loaded in background thread", path_clone);
+                                if let Err(e) =
+                                    sender.send(Ok((path_clone.clone(), loaded_model, materials)))
+                                {
+                                    log::error!(
+                                        "Failed to send loaded model '{}': {}",
+                                        path_clone,
+                                        e
+                                    );
+                                }
                             }
-                            // Register model
-                            self.models.insert(path.clone(), Arc::new(loaded_model));
-                            log::info!("Model '{}' loaded successfully", path);
+                            Err(e) => {
+                                let error_msg =
+                                    format!("Failed to load model '{}': {}", path_clone, e);
+                                let _ = sender.send(Err(error_msg));
+                            }
                         }
-                        Err(e) => {
-                            log::error!("Failed to load model '{}': {}", path, e);
-                        }
-                    }
+                    });
                 }
 
                 #[cfg(target_arch = "wasm32")]
@@ -672,14 +724,15 @@ impl State {
                         {
                             Ok((loaded_model, materials)) => {
                                 log::info!("Model '{}' loaded, sending to main thread", path);
-                                // Send loaded model through channel
-                                if let Err(e) = sender.send((path.clone(), loaded_model, materials))
+                                if let Err(e) =
+                                    sender.send(Ok((path.clone(), loaded_model, materials)))
                                 {
                                     log::error!("Failed to send loaded model '{}': {}", path, e);
                                 }
                             }
                             Err(e) => {
-                                log::error!("Failed to load model '{}': {}", path, e);
+                                let error_msg = format!("Failed to load model '{}': {}", path, e);
+                                let _ = sender.send(Err(error_msg));
                             }
                         }
                     });
@@ -839,6 +892,8 @@ impl State {
         let light_manager = &mut self.light_manager;
         let light_buffer = &self.light_buffer;
         let queue = &self.queue;
+        let loading_models_count =
+            self.pending_model_loads.len() + self.in_flight_model_loads.len();
         let ui_actions = self.egui_renderer.draw(
             &self.device,
             &self.queue,
@@ -859,6 +914,7 @@ impl State {
                     &self.models,
                     &self.materials,
                     &mut self.ui_state,
+                    loading_models_count,
                 )
             },
         );
@@ -875,7 +931,7 @@ impl State {
             }
         }
         if let Some(model_path) = ui_actions.model_to_load {
-            self.pending_model_loads.push(model_path);
+            self.pending_model_loads.insert(model_path);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -953,7 +1009,7 @@ impl State {
 
         for model_path in required_models {
             if !self.models.contains_key(&model_path) {
-                self.pending_model_loads.push(model_path);
+                self.pending_model_loads.insert(model_path);
             }
         }
 

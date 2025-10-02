@@ -7,12 +7,12 @@
   ],
   "camera": {
     "position": [
-      -4.1144004,
-      9.452521,
-      23.6714
+      2.0539692e-7,
+      6.710274,
+      14.698933
     ],
-    "yaw_deg": -82.76007,
-    "pitch_deg": -14.544714,
+    "yaw_deg": -90.0,
+    "pitch_deg": -20.0,
     "fovy_deg": 45.0,
     "znear": 0.1,
     "zfar": 1000.0
@@ -30,8 +30,8 @@
         1.0,
         1.0
       ],
-      "model": "teapot.obj",
-      "material_key": "teapot/default"
+      "model": "cube.obj",
+      "material_key": "default"
     },
     {
       "position": [
@@ -45,19 +45,19 @@
         0.0,
         1.0
       ],
-      "model": "teapot.obj",
-      "material_key": "teapot/default"
+      "model": "cube.obj",
+      "material_key": "default"
     }
   ],
   "particle_systems": [
     {
       "name": "main",
-      "model": "cube.obj",
-      "material_key": "teapot/default",
+      "model": "teapot.obj",
+      "material_key": "default",
       "generator": {
         "type": "grid",
-        "rows": 30,
-        "spacing": 5.1,
+        "rows": 29,
+        "spacing": 7.3,
         "center": [
           0.0,
           0.0,

@@ -68,11 +68,11 @@ pub struct ParticleSystemData {
 }
 
 fn default_model() -> String {
-    "teapot.obj".to_string()
+    crate::defaults::PARTICLE_SYSTEM_MODEL_PATH.to_string()
 }
 
 fn default_material_key() -> String {
-    "default".to_string()
+    crate::defaults::PARTICLE_SYSTEM_MATERIAL_KEY.to_string()
 }
 
 impl ParticleSystemData {

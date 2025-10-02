@@ -1,5 +1,6 @@
 mod app_ui;
 mod camera;
+mod defaults;
 mod egui;
 #[cfg(not(target_arch = "wasm32"))]
 mod engine_desktop;

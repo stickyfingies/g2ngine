@@ -44,6 +44,7 @@ pub fn app_ui(
     models: &std::collections::HashMap<String, std::sync::Arc<crate::model::Model>>,
     materials: &std::collections::HashMap<String, std::sync::Arc<crate::model::Material>>,
     ui_state: &mut UiState,
+    loading_models_count: usize,
 ) -> UiActions {
     let mut actions = UiActions::default();
     egui::Window::new("Scene Editor")
@@ -55,6 +56,48 @@ pub fn app_ui(
         .anchor(Align2::LEFT_TOP, [10.0, 10.0])
         .show(ctx, |ui| {
             ui.heading("Gengine 2");
+
+            // Asset loading status
+            if loading_models_count > 0 {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    format!("⏳ Loading {} model(s)...", loading_models_count),
+                );
+                ui.separator();
+            }
+
+            // Check for missing assets
+            let mut missing_models = std::collections::HashSet::new();
+            let mut missing_materials = std::collections::HashSet::new();
+
+            // Check lights
+            if !models.contains_key(light_manager.model_path()) {
+                missing_models.insert(light_manager.model_path().to_string());
+            }
+            if !materials.contains_key(light_manager.material_key()) {
+                missing_materials.insert(light_manager.material_key().to_string());
+            }
+
+            // Check particle systems
+            for (_name, system) in particle_system_manager.systems() {
+                if !models.contains_key(system.model_path()) {
+                    missing_models.insert(system.model_path().to_string());
+                }
+                if !materials.contains_key(system.material_key()) {
+                    missing_materials.insert(system.material_key().to_string());
+                }
+            }
+
+            if !missing_models.is_empty() || !missing_materials.is_empty() {
+                ui.colored_label(egui::Color32::RED, "⚠ Missing Assets:");
+                for model_path in &missing_models {
+                    ui.colored_label(egui::Color32::RED, format!("  Model: {}", model_path));
+                }
+                for material_key in &missing_materials {
+                    ui.colored_label(egui::Color32::RED, format!("  Material: {}", material_key));
+                }
+                ui.separator();
+            }
 
             ui.separator();
 
@@ -240,8 +283,8 @@ pub fn app_ui(
                             let system = ParticleSystem::new(
                                 device,
                                 name.clone(),
-                                "teapot.obj".to_string(),
-                                "default".to_string(),
+                                crate::defaults::PARTICLE_SYSTEM_MODEL_PATH.to_string(),
+                                crate::defaults::PARTICLE_SYSTEM_MATERIAL_KEY.to_string(),
                                 GeneratorType::Grid(params),
                             );
                             particle_system_manager.add(name, system);
@@ -257,8 +300,8 @@ pub fn app_ui(
                             let system = ParticleSystem::new(
                                 device,
                                 name.clone(),
-                                "teapot.obj".to_string(),
-                                "default".to_string(),
+                                crate::defaults::PARTICLE_SYSTEM_MODEL_PATH.to_string(),
+                                crate::defaults::PARTICLE_SYSTEM_MATERIAL_KEY.to_string(),
                                 GeneratorType::Sphere(params),
                             );
                             particle_system_manager.add(name, system);
@@ -549,7 +592,10 @@ pub fn app_ui(
                 });
 
                 ui.label("Common models in res/:");
-                ui.label("• teapot.obj");
+                ui.label(&format!(
+                    "• {}",
+                    crate::defaults::PARTICLE_SYSTEM_MODEL_PATH
+                ));
             });
 
             ui.separator();

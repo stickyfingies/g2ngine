@@ -38,8 +38,8 @@ impl LightManager {
             lights: [Light::default(); MAX_LIGHTS],
             active_mask: 0,
             dirty: false,
-            model_path: "cube.obj".to_string(),
-            material_key: "default".to_string(),
+            model_path: crate::defaults::LIGHT_MODEL_PATH.to_string(),
+            material_key: crate::defaults::LIGHT_MATERIAL_KEY.to_string(),
         }
     }
 
